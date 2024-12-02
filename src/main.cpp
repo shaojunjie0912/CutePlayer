@@ -9,6 +9,9 @@ extern "C" {
 #include <libswscale/swscale.h>
 };
 
+using std::cout;
+using std::endl;
+
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         std::cout << "未指定文件路径" << std::endl;
@@ -35,6 +38,17 @@ int main(int argc, char* argv[]) {
         // 获取编解码器参数
         AVCodecParameters* codec_params = format_context->streams[i]->codecpar;
         // 根据编解码器类型 ID (AV_CODEC_ID_H264, AV_CODEC_ID_HEVC...) 查找解码器
+        // hevc & aac
         AVCodec const* codec = avcodec_find_decoder(codec_params->codec_id);
+        // cout << "codec name: " << codec->name << endl;
+        // HACK: 咋 codec->name 不放在 codec_params 里面？因为里面放了 codec_id
+        if (codec_params->codec_type == AVMEDIA_TYPE_VIDEO) {
+            // cout<<"Video Codec: Resolution: "<<
+            printf("[视频] 编解码器: %s; 分辨率: %dx%d\n", codec->name, codec_params->width,
+                   codec_params->height);
+        } else if (codec_params->codec_type == AVMEDIA_TYPE_AUDIO) {
+            printf("[音频] 编解码器: %s; 通道数: %d, 采样率: %dHz\n", codec->name,
+                   codec_params->ch_layout.nb_channels, codec_params->sample_rate);
+        }
     }
 }
