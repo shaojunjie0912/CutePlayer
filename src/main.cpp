@@ -11,38 +11,25 @@ extern "C" {
 // TODO: 未增加任何返回值检测
 
 int main(int argc, char* argv[]) {
-    char const* file_path = nullptr;
+    char const* input_file = nullptr;
+    char const* output_file = nullptr;
     if (argc < 2) {
-#ifdef MP4_FILE
-        file_path = MP4_FILE;
-#else
-        printf("没有指定视频/音频文件！\n");
+        printf("没有指定输入/输出文件！\n");
+        printf("Usage: ./build/src/main input_file output_file\n");
         return -1;
-#endif
     } else if (argc >= 2) {
-        file_path = argv[1];
+        input_file = argv[1];
+        output_file = argv[2];
     }
 
-    FILE* fp_265;
-    FILE* fp_yuv;
-
-#ifdef H265_FILE
-    fp_265 = fopen(H265_FILE, "wb+");
-#else
-    printf("没有指定输出 yuv 文件路径！\n");
-#endif
-
-#ifdef YUV_FILE
-    fp_yuv = fopen(YUV_FILE, "wb+");
-#else
-    printf("没有指定输出 yuv 文件路径！\n");
-#endif
+    FILE* fp_265 = fopen(output_file, "wb+");
+    FILE* fp_yuv = fopen("", "wb+");
 
     // 1. 分配格式上下文空间
     AVFormatContext* format_context = avformat_alloc_context();
 
     // 2. 打开视频/音频流文件
-    avformat_open_input(&format_context, file_path, nullptr, nullptr);
+    avformat_open_input(&format_context, input_file, nullptr, nullptr);
 
     // 3. 获取流信息
     // - format_context->iformat->name
@@ -124,22 +111,23 @@ int main(int argc, char* argv[]) {
             }
             // NOTE: 一个 AVPacket 可能会解码出多个 AVFrame
             // 确保从解码器中提取所有可能的解码帧
-            while (ret >= 0) {
-                ret = avcodec_receive_frame(codec_context, frame);
-                // AVERROR(EAGAIN): 当前的包数据不足以生成完整的帧，需要更多的包来解码完整帧
-                // AVERROR_EOF: 已解码完所有帧
-                if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF || ret < 0) {
-                    break;
-                }
-                // NOTE: 解码出来的 Frame 有黑边，因此需要对其进行缩放
-                sws_scale(img_convert_context, (uint8_t const* const*)frame->data, frame->linesize,
-                          0, codec_context->height, frame_yuv->data, frame_yuv->linesize);
-                int y_size = codec_context->width * codec_context->height;
-                // NOTE: frame_yuv->data 是 uint8_t* [n] 指针数组
-                fwrite(frame_yuv->data[0], 1, y_size, fp_yuv);      // Y 分量
-                fwrite(frame_yuv->data[1], 1, y_size / 4, fp_yuv);  // U 分量
-                fwrite(frame_yuv->data[2], 1, y_size / 4, fp_yuv);  // V 分量
-            }
+            // while (ret >= 0) {
+            //     ret = avcodec_receive_frame(codec_context, frame);
+            //     // AVERROR(EAGAIN): 当前的包数据不足以生成完整的帧，需要更多的包来解码完整帧
+            //     // AVERROR_EOF: 已解码完所有帧
+            //     if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF || ret < 0) {
+            //         break;
+            //     }
+            //     // NOTE: 解码出来的 Frame 有黑边，因此需要对其进行缩放
+            //     sws_scale(img_convert_context, (uint8_t const* const*)frame->data,
+            //     frame->linesize,
+            //               0, codec_context->height, frame_yuv->data, frame_yuv->linesize);
+            //     int y_size = codec_context->width * codec_context->height;
+            //     // NOTE: frame_yuv->data 是 uint8_t* [n] 指针数组
+            //     fwrite(frame_yuv->data[0], 1, y_size, fp_yuv);      // Y 分量
+            //     fwrite(frame_yuv->data[1], 1, y_size / 4, fp_yuv);  // U 分量
+            //     fwrite(frame_yuv->data[2], 1, y_size / 4, fp_yuv);  // V 分量
+            // }
         }
         av_packet_unref(packet);  // 用完必须释放 packet
     }
