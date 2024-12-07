@@ -1,12 +1,7 @@
-add_executable(main main.cpp)
-
-set(INPUT_DIR "${PROJECT_SOURCE_DIR}/data/input")
-set(OUTPUT_DIR "${PROJECT_SOURCE_DIR}/data/ouput")
-
-file(MAKE_DIRECTORY ${OUTPUT_DIR})
+add_executable(mp4_rgb24_ppm mp4_rgb24_ppm.cpp)
 
 target_link_libraries(
-  main
+  mp4_rgb24_ppm
   PUBLIC avcodec
          avformat
          avfilter
