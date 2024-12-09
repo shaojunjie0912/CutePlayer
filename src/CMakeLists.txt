@@ -1,5 +1,6 @@
 add_executable(mp4_rgb24_ppm mp4_rgb24_ppm.cpp)
 add_executable(use_sdl2 use_sdl2.cpp)
+add_executable(add_audio add_audio.cpp)
 
 target_link_libraries(
   mp4_rgb24_ppm
@@ -21,3 +22,13 @@ target_link_libraries(
          swscale
          avutil
          SDL2)
+
+target_link_libraries(
+  add_audio
+  PUBLIC avcodec
+         avformat
+         avfilter
+         avdevice
+         swresample
+         swscale
+         avutil)

@@ -73,9 +73,10 @@ int main(int argc, char* argv[]) {
     AVFrame* frame = av_frame_alloc();
     AVFrame* frame_yuv = av_frame_alloc();
 
-    SDL_Window* window = SDL_CreateWindow(
-        "SDL Video Player", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, codec_context->width,
-        codec_context->height, SDL_WINDOW_OPENGL | SDL_WINDOW_ALLOW_HIGHDPI);
+    SDL_Window* window =
+        SDL_CreateWindow("SDL Video Player", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
+                         codec_context->width / 2, codec_context->height / 2,
+                         SDL_WINDOW_OPENGL | SDL_WINDOW_ALLOW_HIGHDPI);
     if (!window) {
         printf("SDL: could not set video mode - exiting.\n");
         return -1;
