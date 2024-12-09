@@ -1,0 +1,9 @@
+Language: Cpp
+# 基础样式
+BasedOnStyle: Google
+# 缩进宽度
+IndentWidth: 4
+# 每行字符的长度
+ColumnLimit: 100
+# 访问修饰符前的空格
+AccessModifierOffset: -4
