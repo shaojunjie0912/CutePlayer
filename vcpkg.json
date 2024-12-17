@@ -1,0 +1,6 @@
+{
+  "dependencies": [
+    "ffmpeg",
+    "sdl2"
+  ]
+}
