@@ -9,11 +9,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 project(CutePlayer)
 
 find_package(FFMPEG REQUIRED)
-find_package(SDL2 REQUIRED)
-
-include_directories(${FFMPEG_INCLUDE_DIRS} ${SDL2_INCLUDE_DIRS})
-link_directories(${FFMPEG_LIBRARY_DIRS} ${SDL2_LIBRARY_DIRS})
-link_libraries(${FFMPEG_LIBRARIES} ${SDL2_LIBRARIES})
+find_package(SDL2 CONFIG REQUIRED)
 
 add_subdirectory(src)
 
