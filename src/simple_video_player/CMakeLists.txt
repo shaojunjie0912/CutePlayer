@@ -10,8 +10,4 @@ target_link_libraries(simple_video_player PRIVATE ${FFMPEG_LIBRARIES})
 
 # SDL2
 target_include_directories(simple_video_player PRIVATE ${SDL2_INCLUDE_DIRS})
-target_link_libraries(simple_video_player 
-    PRIVATE 
-    $<TARGET_NAME_IF_EXISTS:SDL2::SDL2main> 
-    $<IF:$<TARGET_EXISTS:SDL2::SDL2>,SDL2::SDL2,SDL2::SDL2-static>)
-
+target_link_libraries(simple_video_player PRIVATE SDL2::SDL2main SDL2::SDL2)

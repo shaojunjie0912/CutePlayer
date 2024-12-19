@@ -15,7 +15,4 @@ target_link_libraries(test_audio PRIVATE ${FFMPEG_LIBRARIES})
 
 # SDL2
 target_include_directories(test_audio PRIVATE ${SDL2_INCLUDE_DIRS})
-target_link_libraries(test_audio 
-    PRIVATE 
-    $<TARGET_NAME_IF_EXISTS:SDL2::SDL2main> 
-    $<IF:$<TARGET_EXISTS:SDL2::SDL2>,SDL2::SDL2,SDL2::SDL2-static>)
+target_link_libraries(test_audio PRIVATE SDL2::SDL2main SDL2::SDL2)
