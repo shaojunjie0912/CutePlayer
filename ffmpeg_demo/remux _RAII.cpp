@@ -1,3 +1,4 @@
+#include <stdexcept>
 #include <vector>
 
 extern "C" {
@@ -5,6 +6,22 @@ extern "C" {
 #include <libavutil/avutil.h>
 #include <libavutil/log.h>
 }
+
+struct CuteFormatContext {
+    AVFormatContext* context;
+
+    CuteFormatContext(const char* filename, const char* format = nullptr) {
+        if (avformat_open_input(&context, filename, nullptr, nullptr) < 0) {
+            throw std::runtime_error("Failed to open input file");
+        }
+    }
+
+    ~CuteFormatContext() noexcept {
+        if (context) {
+            avformat_close_input(&context);
+        }
+    }
+};
 
 int main(int argc, char* argv[]) {
     if (argc < 3) {
@@ -15,12 +32,7 @@ int main(int argc, char* argv[]) {
     char const* output_file = argv[2];
 
     // 打开输入多媒体文件上下文
-    AVFormatContext* input_format_context = nullptr;
-    int ret = avformat_open_input(&input_format_context, input_file, nullptr, nullptr);
-    if (ret < 0) {
-        av_log(nullptr, AV_LOG_ERROR, "Can't open file!");
-        return -1;
-    }
+    CuteFormatContext input_format_context{input_file};
 
     // 打开输出文件上下文
     AVFormatContext* output_format_context;  // 根据输出文件后缀分配格式上下文
@@ -39,7 +51,6 @@ int main(int argc, char* argv[]) {
     int tmp_stream_id = 0;
     for (int i = 0; i < input_nb_streams; ++i) {
         AVCodecParameters* input_codec_params = input_format_context->streams[i]->codecpar;
-
         // ❌不是视频/音频/字幕! 跳过! 置 -1
         if (input_codec_params->codec_type != AVMEDIA_TYPE_VIDEO &&
             input_codec_params->codec_type != AVMEDIA_TYPE_AUDIO &&

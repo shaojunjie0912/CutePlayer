@@ -10,4 +10,5 @@ endmacro()
 
 create_executable(extract_audio)
 create_executable(extract_video)
-create_executable(remux_audio_video)
+create_executable(remux)
+create_executable(cut)

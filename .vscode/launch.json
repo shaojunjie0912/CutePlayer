@@ -8,10 +8,12 @@
             // Resolved by CMake Tools:
             "program": "${command:cmake.launchTargetPath}",
             "args": [
-                "data/video.mp4",
+                "data/k-on!.mp4",
                 // "data/lalal.aac"
                 // "data/k-on!.h265"
-                "data/k-on!.mov"
+                "data/k-on!.mov",
+                "60",
+                "120"
             ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",

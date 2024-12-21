@@ -88,9 +88,11 @@ int main(int argc, char* argv[]) {
         // NOTE: pts: Presentation Time Stamp 呈现时间戳
         // 四舍五入 | 上下限
         if (packet->stream_index == audio_idx) {
+            // 重设 pts 时基
             packet->pts = av_rescale_q_rnd(packet->pts, input_audio_stream->time_base,
                                            output_audio_stream->time_base,
                                            (AVRounding)(AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX));
+            // 重设 dts 时基
             packet->dts = packet->pts;  // 音频 pts == dts
             packet->duration = av_rescale_q(packet->duration, input_audio_stream->time_base,
                                             output_audio_stream->time_base);
