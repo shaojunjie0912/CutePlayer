@@ -1,0 +1,2 @@
+add_subdirectory(simple_video_player)
+add_subdirectory(simple_audio_player)
