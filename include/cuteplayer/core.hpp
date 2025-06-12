@@ -5,7 +5,7 @@
 #include <string>
 
 //
-#include <player/ffmpeg.hpp>
+#include <cuteplayer/ffmpeg.hpp>
 
 constexpr int kFrameQueueSize = 16;
 

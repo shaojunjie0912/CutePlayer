@@ -1,6 +1,6 @@
 #pragma once
 
-#include <player/ffmpeg.hpp>
+#include <cuteplayer/ffmpeg.hpp>
 
 constexpr int kDefaultWidth = 960;
 constexpr int kDefaultHeight = 540;

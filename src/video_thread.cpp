@@ -1,4 +1,4 @@
-#include <player/video_thread.hpp>
+#include <cuteplayer/video_thread.hpp>
 
 extern SDL_Window* window;
 extern SDL_Renderer* renderer;
@@ -29,7 +29,8 @@ void DisplayVideo(VideoState* video_state) {
         int height = frame->height;
 
         uint32_t pix_format = SDL_PIXELFORMAT_IYUV;
-        video_state->texture_ = SDL_CreateTexture(renderer, pix_format, SDL_TEXTUREACCESS_STREAMING, width, height);
+        video_state->texture_ =
+            SDL_CreateTexture(renderer, pix_format, SDL_TEXTUREACCESS_STREAMING, width, height);
         if (!video_state->texture_) {
             av_log(nullptr, AV_LOG_ERROR, "SDL_CreateTexture failed\n");
             return;
@@ -38,8 +39,8 @@ void DisplayVideo(VideoState* video_state) {
 
     // 计算显示的位置
     SDL_Rect rect;
-    CalculateDisplayRect(&rect, video_state->x_left_, video_state->y_top_, video_state->width_, video_state->height_,
-                         vp->width_, vp->height_, vp->sar_);
+    CalculateDisplayRect(&rect, video_state->x_left_, video_state->y_top_, video_state->width_,
+                         video_state->height_, vp->width_, vp->height_, vp->sar_);
 
     // 渲染
     SDL_UpdateYUVTexture(video_state->texture_, nullptr, frame->data[0], frame->linesize[0], frame->data[1],

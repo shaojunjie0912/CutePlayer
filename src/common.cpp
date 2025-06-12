@@ -1,4 +1,4 @@
-#include <player/common.hpp>
+#include <cuteplayer/common.hpp>
 
 uint32_t MyRefreshTimerCallback(uint32_t, void* opaque) {
     SDL_Event event;
@@ -13,8 +13,8 @@ void RefreshSchedule(VideoState* video_state, int delay) {
     SDL_AddTimer(delay, MyRefreshTimerCallback, video_state);
 }
 
-void CalculateDisplayRect(SDL_Rect* rect, int screen_x_left, int screen_y_top, int screen_width, int screen_height,
-                          int picture_width, int picture_height, AVRational picture_sar) {
+void CalculateDisplayRect(SDL_Rect* rect, int screen_x_left, int screen_y_top, int screen_width,
+                          int screen_height, int picture_width, int picture_height, AVRational picture_sar) {
     // NOTE: picture_sar: sample aspect ratio 图片的像素宽高比(即图像每个像素的宽高比)
     // 不同于 DAR(display aspect ratio) 显示的宽高比
     AVRational aspect_ratio = picture_sar;

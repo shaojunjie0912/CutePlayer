@@ -1,4 +1,4 @@
-#include <player/core.hpp>
+#include <cuteplayer/core.hpp>
 
 // peek: 偷看(用于 FrameQueue)
 // get: 获取(用于 PacketQueue)

@@ -1,4 +1,4 @@
-#include <player/audio_thread.hpp>
+#include <cuteplayer/audio_thread.hpp>
 
 int AudioDecodeFrame(VideoState* video_state) {
     int ret{-1};
@@ -46,13 +46,15 @@ int AudioDecodeFrame(VideoState* video_state) {
 
                 // 重采样后输出缓冲区大小
                 // = 2 * 2 * video_state->audio_frame_.nb_samples
-                int out_size = av_samples_get_buffer_size(nullptr, video_state->audio_frame_.ch_layout.nb_channels,
-                                                          out_count, AV_SAMPLE_FMT_S16, 0);
+                int out_size =
+                    av_samples_get_buffer_size(nullptr, video_state->audio_frame_.ch_layout.nb_channels,
+                                               out_count, AV_SAMPLE_FMT_S16, 0);
                 // 重新分配 audio_buffer_ 内存
                 av_fast_malloc(&video_state->audio_buffer_, &video_state->audio_buffer_size_, out_size);
 
                 // 重采样 -> 返回每个通道的样本数
-                int nb_ch_samples = swr_convert(video_state->audio_swr_context_, out, out_count, in, in_count);
+                int nb_ch_samples =
+                    swr_convert(video_state->audio_swr_context_, out, out_count, in, in_count);
                 data_size = nb_ch_samples * video_state->audio_frame_.ch_layout.nb_channels *
                             av_get_bytes_per_sample(AV_SAMPLE_FMT_S16);
             }
@@ -123,8 +125,8 @@ int OpenAudio(void* opaque, AVChannelLayout* wanted_channel_layout, int wanted_s
         .userdata = opaque,
     };
 
-    av_log(nullptr, AV_LOG_INFO, "wanted spec: channels: %d, sample_fmt: %d, sample_rate:%d\n", wanted_nb_channels,
-           AUDIO_S16SYS, wanted_sample_rate);
+    av_log(nullptr, AV_LOG_INFO, "wanted spec: channels: %d, sample_fmt: %d, sample_rate:%d\n",
+           wanted_nb_channels, AUDIO_S16SYS, wanted_sample_rate);
 
     SDL_AudioSpec spec;
     int ret = SDL_OpenAudio(&wanted_spec, &spec);

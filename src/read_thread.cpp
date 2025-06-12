@@ -1,4 +1,4 @@
-#include <player/read_thread.hpp>
+#include <cuteplayer/read_thread.hpp>
 
 int OpenStreamComponent(VideoState* video_state, uint32_t stream_index);
 
@@ -24,8 +24,8 @@ VideoState* OpenStream(std::string const& file_name) {
     }
 
     // 初始化 Video FrameQueue
-    ret =
-        InitFrameQueue(&video_state->video_frame_queue_, &video_state->video_packet_queue_, kVideoPictureQueueSize, 1);
+    ret = InitFrameQueue(&video_state->video_frame_queue_, &video_state->video_packet_queue_,
+                         kVideoPictureQueueSize, 1);
     if (ret < 0) {
         av_log(nullptr, AV_LOG_ERROR, "Init Video FrameQueue failed\n");
         return nullptr;
