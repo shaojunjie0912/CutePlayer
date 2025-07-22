@@ -181,7 +181,6 @@ int DecodeThread(void* arg) {
 
     VideoState* video_state = static_cast<VideoState*>(arg);
     AVFrame* video_frame = av_frame_alloc();  // 解码后的视频帧
-    Frame* frame = nullptr;
 
     AVRational time_base = video_state->video_stream_->time_base;
     AVRational frame_rate = video_state->video_stream_->avg_frame_rate;
@@ -226,7 +225,7 @@ int DecodeThread(void* arg) {
             pts = SyschronizeVideo(video_state, video_frame, pts);
 
             // 插入到视频帧队列
-            QueuePicture(video_state, video_frame, pts, duration, video_frame->pkt_pos);
+            QueuePicture(video_state, video_frame, pts, duration, AV_NOPTS_VALUE);
 
             // 解引用
             av_frame_unref(video_frame);

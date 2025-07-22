@@ -5,13 +5,13 @@
     ],
     "xmake.debugConfigType": "codelldb",
     "xmake.debuggingTargetsArguments": {
-        "player": [
-            "${workspaceFolder}/data/k-on.mp4"
+        "cuteplayer": [
+            "${workspaceFolder}/data/zelda.mp4"
         ]
     },
     "xmake.runningTargetsArguments": {
-        "player": [
-            "${workspaceFolder}/data/k-on.mp4"
+        "cuteplayer": [
+            "${workspaceFolder}/data/zelda.mp4"
         ]
     }
 }

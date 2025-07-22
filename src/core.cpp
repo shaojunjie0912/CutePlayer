@@ -4,7 +4,11 @@
 // get: 获取(用于 PacketQueue)
 
 int InitPacketQueue(PacketQueue *q) {
-    memset(q, 0, sizeof(PacketQueue));
+    // 手动初始化各成员，避免使用 memset 清除非平凡类型
+    q->pkt_list_ = nullptr;
+    q->nb_packets_ = 0;
+    q->size_ = 0;
+    q->duration_ = 0;
     q->pkt_list_ = av_fifo_alloc2(1, sizeof(MyAVPacketList), AV_FIFO_FLAG_AUTO_GROW);
     if (!q->pkt_list_) {
         return AVERROR(ENOMEM);
@@ -90,10 +94,20 @@ void DestoryPacketQueue(PacketQueue *q) {
 
 int InitFrameQueue(FrameQueue *f, PacketQueue *pktq, int max_size, int keep_last) {
     int i;
-    memset(f, 0, sizeof(FrameQueue));
+    // 手动初始化各成员，避免使用 memset 清除非平凡类型
+    f->rindex_ = 0;
+    f->windex_ = 0;
+    f->size_ = 0;
+    f->rindex_shown_ = 0;
     f->pktq_ = pktq;
     f->max_size_ = FFMIN(max_size, kFrameQueueSize);
     f->keep_last_ = !!keep_last;
+    
+    // 初始化队列中的每个 Frame
+    for (i = 0; i < kFrameQueueSize; i++) {
+        f->queue_[i] = {}; // 零初始化每个 Frame
+    }
+    
     for (i = 0; i < f->max_size_; i++) {
         // 为 FrameQueue 中的 max_size 个 Frame 分配内存
         if (!(f->queue_[i].frame_ = av_frame_alloc())) {

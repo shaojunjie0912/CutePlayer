@@ -7,8 +7,7 @@ add_rules("mode.debug", "mode.release")
 add_rules("plugin.compile_commands.autoupdate")
 
 -- set_defaultmode("debug")
-
--- set_warnings("allextra")
+set_warnings("allextra")
 
 add_requires("ffmpeg")
 add_requires("libsdl2")

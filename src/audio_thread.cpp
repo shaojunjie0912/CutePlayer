@@ -115,15 +115,14 @@ int OpenAudio(void* opaque, AVChannelLayout* wanted_channel_layout, int wanted_s
     int wanted_nb_channels{wanted_channel_layout->nb_channels};
 
     // 设置音频参数
-    SDL_AudioSpec wanted_spec{
-        .freq = wanted_sample_rate,
-        .format = AUDIO_S16SYS,
-        .channels = (uint8_t)wanted_nb_channels,
-        .silence = 0,
-        .samples = kSdlAudioBufferSize,
-        .callback = MyAudioCallback,
-        .userdata = opaque,
-    };
+    SDL_AudioSpec wanted_spec{};
+    wanted_spec.freq = wanted_sample_rate;
+    wanted_spec.format = AUDIO_S16SYS;
+    wanted_spec.channels = (uint8_t)wanted_nb_channels;
+    wanted_spec.silence = 0;
+    wanted_spec.samples = kSdlAudioBufferSize;
+    wanted_spec.callback = MyAudioCallback;
+    wanted_spec.userdata = opaque;
 
     av_log(nullptr, AV_LOG_INFO, "wanted spec: channels: %d, sample_fmt: %d, sample_rate:%d\n",
            wanted_nb_channels, AUDIO_S16SYS, wanted_sample_rate);
