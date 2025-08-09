@@ -4,13 +4,13 @@
 SDL_Window* window = nullptr;
 SDL_Renderer* renderer = nullptr;
 
-// TODO: break 是否导致内存泄漏隐患?
+// 待办: break 是否导致内存泄漏隐患?
 
 int main(int argc, char* argv[]) {
-    av_log_set_level(AV_LOG_INFO);
+    InitLogger();
 
     if (argc < 2) {
-        av_log(nullptr, AV_LOG_ERROR, "Usage: %s <file>\n", argv[0]);
+        LOG_ERROR("Usage: {} <file>", argv[0]);
         return -1;
     }
 
@@ -18,7 +18,7 @@ int main(int argc, char* argv[]) {
 
     int sdl_init_flags = SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER;
     if (SDL_Init(sdl_init_flags)) {
-        av_log(nullptr, AV_LOG_ERROR, "Could not initialize SDL - %s\n", SDL_GetError());
+        LOG_ERROR("初始化 SDL 失败: {}", SDL_GetError());
         return -1;
     }
 
@@ -29,14 +29,14 @@ int main(int argc, char* argv[]) {
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
 
     if (!window || !renderer) {
-        av_log(nullptr, AV_LOG_ERROR, "Could not create window or renderer - %s\n", SDL_GetError());
+        LOG_ERROR("创建窗口或渲染器失败: {}", SDL_GetError());
         return -1;
     }
 
-    VideoState* video_state = OpenStream(input_file);
+    AVState* video_state = OpenStream(input_file);
 
     if (!video_state) {
-        av_log(nullptr, AV_LOG_ERROR, "OpenStream failed\n");
+        LOG_ERROR("打开流失败");
         return -1;
     }
     // 监听键盘鼠标事件

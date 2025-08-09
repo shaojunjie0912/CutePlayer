@@ -3,7 +3,7 @@
 extern SDL_Window* window;
 extern SDL_Renderer* renderer;
 
-int OpenVideo(VideoState* video_state) {
+int OpenVideo(AVState* video_state) {
     SDL_SetWindowTitle(window, video_state->file_name_.c_str());
 
     SDL_SetWindowSize(window, kScreenWidth, kScreenHeight);
@@ -16,7 +16,7 @@ int OpenVideo(VideoState* video_state) {
     return 0;
 }
 
-void DisplayVideo(VideoState* video_state) {
+void DisplayVideo(AVState* video_state) {
     if (video_state->width_ == 0) {
         OpenVideo(video_state);
     }
@@ -32,7 +32,7 @@ void DisplayVideo(VideoState* video_state) {
         video_state->texture_ =
             SDL_CreateTexture(renderer, pix_format, SDL_TEXTUREACCESS_STREAMING, width, height);
         if (!video_state->texture_) {
-            av_log(nullptr, AV_LOG_ERROR, "SDL_CreateTexture failed\n");
+            LOG_ERROR("SDL_CreateTexture failed");
             return;
         }
     }
@@ -54,7 +54,7 @@ void DisplayVideo(VideoState* video_state) {
 }
 
 void VideoRefreshTimer(void* user_data) {
-    VideoState* video_state = static_cast<VideoState*>(user_data);
+    AVState* video_state = static_cast<AVState*>(user_data);
     Frame* vp{nullptr};
 
     double actual_delay, delay, sync_threshold, ref_clock, diff;
@@ -69,7 +69,7 @@ void VideoRefreshTimer(void* user_data) {
             if (video_state->frame_last_pts_ == 0) {
                 delay = 0;
             } else {
-                // the pts from last time
+                // 上一次的 pts
                 delay = vp->pts_ - video_state->frame_last_pts_;
             }
 
@@ -77,17 +77,17 @@ void VideoRefreshTimer(void* user_data) {
                 // 如果是不正确的 delay, 使用上一次的 delay
                 delay = video_state->frame_last_delay_;
             }
-            // save for next time
+            // 保存供下次使用
             video_state->frame_last_delay_ = delay;
             video_state->frame_last_pts_ = vp->pts_;
 
             // 更新 delay 同步到音频
             // ref_clock = GetMasterClock(video_state);  // 获取主时钟(这里就是音频时钟)
-            ref_clock = video_state->audio_clock_;  // NOTE: 我直接写死了
+            ref_clock = video_state->audio_clock_;  // 注意: 我直接写死了
             diff = vp->pts_ - ref_clock;
 
-            // Skip or repeat the frame. Take delay into account
-            // FFPlay still doesn't "know if this is the best guess."
+            // 跳过或重复帧。考虑延迟因素
+            // FFPlay 仍然不知道"这是否是最佳猜测。"
             sync_threshold = (delay > kMaxAvSyncThreshold) ? delay : kMaxAvSyncThreshold;
             if (fabs(diff) < kAvNoSyncThreshold) {
                 if (diff <= -sync_threshold) {        // diff 小于负阈值, 视频慢了
@@ -112,7 +112,7 @@ void VideoRefreshTimer(void* user_data) {
     }
 }
 
-void SdlEventLoop(VideoState* video_state) {
+void SdlEventLoop(AVState* video_state) {
     SDL_Event event;
     while (true) {
         SDL_WaitEvent(&event);
@@ -122,7 +122,7 @@ void SdlEventLoop(VideoState* video_state) {
                 SDL_Quit();
                 return;
             case kFFRefreshEvent:
-                // NOTE: 这里是视频刷新
+                // 注意: 这里是视频刷新
                 VideoRefreshTimer(event.user.data1);
                 break;
             default:
@@ -131,11 +131,11 @@ void SdlEventLoop(VideoState* video_state) {
     }
 }
 
-int QueuePicture(VideoState* video_state, AVFrame* src_frame, double pts, double duration,
+int QueuePicture(AVState* video_state, AVFrame* src_frame, double pts, double duration,
                  int64_t pos) {
     Frame* vp;
     if (!(vp = PeekWritableFrameQueue(&video_state->video_frame_queue_))) {
-        av_log(nullptr, AV_LOG_ERROR, "PeekWritableFrameQueue failed\n");
+        LOG_ERROR("PeekWritableFrameQueue failed");
         return -1;
     }
     vp->sar_ = src_frame->sample_aspect_ratio;
@@ -154,7 +154,7 @@ int QueuePicture(VideoState* video_state, AVFrame* src_frame, double pts, double
     return 0;
 }
 
-double SyschronizeVideo(VideoState* video_state, AVFrame* frame, double pts) {
+double SyschronizeVideo(AVState* video_state, AVFrame* frame, double pts) {
     double frame_delay;
 
     if (pts != 0) {
@@ -180,7 +180,7 @@ int DecodeThread(void* arg) {
     double pts;
     double duration;
 
-    VideoState* video_state = static_cast<VideoState*>(arg);
+    AVState* video_state = static_cast<AVState*>(arg);
     AVFrame* video_frame = av_frame_alloc();  // 解码后的视频帧
 
     AVRational time_base = video_state->video_stream_->time_base;
@@ -195,7 +195,7 @@ int DecodeThread(void* arg) {
         ret = GetPacketQueue(&video_state->video_packet_queue_, &video_state->video_packet_, 0);
         if (ret <= 0) {
             // 意味着我们停止获取包
-            av_log(nullptr, AV_LOG_DEBUG, "Video delay 10 ms\n");
+            LOG_DEBUG("Video delay 10 ms");
             SDL_Delay(10);  // 没当读不到数据就等 10 ms 再看
             continue;
         }
@@ -203,7 +203,7 @@ int DecodeThread(void* arg) {
         ret = avcodec_send_packet(video_state->video_codec_context_, &video_state->video_packet_);
         av_packet_unref(&video_state->video_packet_);  // 清空引用计数(因为解码器内部会拷贝一份)
         if (ret < 0) {
-            av_log(nullptr, AV_LOG_ERROR, "avcodec_send_packet failed\n");
+            LOG_ERROR("avcodec_send_packet failed");
             return -1;
         }
         while (ret >= 0) {
@@ -211,11 +211,11 @@ int DecodeThread(void* arg) {
             if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
                 break;
             } else if (ret < 0) {
-                av_log(nullptr, AV_LOG_ERROR, "avcodec_receive_frame failed\n");
+                LOG_ERROR("avcodec_receive_frame failed");
                 return -1;
             }
 
-            // NOTE: 如果不做音视频同步的话，这里直接显示就行了
+            // 注意: 如果不做音视频同步的话，这里直接显示就行了
             // DisplayVideo(video_state);
 
             // ================== 音视频同步 ==================

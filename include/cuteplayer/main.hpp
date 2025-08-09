@@ -4,6 +4,10 @@
 #include <mutex>
 #include <string>
 
+// ================== spdlog ==================
+#include <spdlog/sinks/stdout_color_sinks.h>
+#include <spdlog/spdlog.h>
+
 // ================== FFmpeg ==================
 extern "C" {
 #define SDL_MAIN_HANDLED
@@ -16,50 +20,58 @@ extern "C" {
 #include <libswresample/swresample.h>
 }
 
-// ================== core ==================
-constexpr int kFrameQueueSize = 16;
+// NOTE: AVFifo: FFmpeg 封装的通用队列(支持自动增长), 它不关心数据类型, 只关心数据大小(字节)
 
+// ================== core ==================
+
+// 包装的 MyAVPacketList 目前存储 AVPacket 指针, 支持后续扩展
 struct MyAVPacketList {
-    AVPacket *pkt;
+    AVPacket *pkt;  // 未解码的压缩数据包
 };
 
+// 压缩包队列
 struct PacketQueue {
-    AVFifo *pkt_list_; /* ffmpeg封装的队列数据结构，里面的数据对象是MyAVPacketList */
-    int nb_packets_;   /* 队列中当前的packet数 */
-    int size_;         /* 队列所有节点占用的总内存大小 */
-    int64_t duration_; /* 队列中所有节点的合计时长 */
+    AVFifo *pkt_list_;  // 先进先出队列, 存储 MyAVPacketList
+    int nb_packets_;    // 队列中当前的packet数
+    int size_;          // 队列所有节点占用的总内存大小
+    int64_t duration_;  // 队列中所有节点的合计时长
     std::mutex mtx_;
     std::condition_variable cv_;  // 队列是否为空的条件变量
 };
 
+// 解码帧类
 struct Frame {
-    AVFrame *frame_;
-    double pts_;      /* presentation timestamp for the frame */
-    double duration_; /* estimated duration of the frame */
-    int64_t pos_;     /* byte position of the frame in the input file */
+    AVFrame *frame_;   // 解码后的帧
+    double pts_;       // 帧的显示时间戳
+    double duration_;  // 帧的估计持续时间
+    int64_t pos_;      // 帧在输入文件中的字节位置
     int width_;
     int height_;
     int format_;
     AVRational sar_;
 };
 
+// 解码帧环形队列
+constexpr int kFrameQueueSize = 16;  // 解码帧环形队列默认大小 16 (用户配置为 3)
 struct FrameQueue {
-    Frame queue_[kFrameQueueSize]; /* 用于存放帧数据的队列 */
-    int rindex_;                   /* 读索引 */
-    int windex_;                   /* 写索引 */
-    int size_;                     /* 队列中的帧数 */
-    int max_size_;                 /* 队列最大缓存的帧数 */
-    int keep_last_;                /* 播放后是否在队列中保留上一帧不销毁 */
-    int rindex_shown_; /* keep_last的实现，读的时候实际上读的是rindex + rindex_shown，分析见下 */
+    Frame queue_[kFrameQueueSize];  // 数组实现环形队列
+    int rindex_;                    // 读索引
+    int windex_;                    // 写索引
+    int size_;                      // 队列当前帧数
+    int max_size_;                  // 队列最大帧数 (用户配置)
+
+    int keep_last_;     // 播放后是否在队列中保留上一帧不销毁
+    int rindex_shown_;  // keep_last的实现，读的时候实际上读的是rindex + rindex_shown
+
     std::mutex mtx_;
-    std::condition_variable cv_notfull_;   // 队列是否为空的条件变量
-    std::condition_variable cv_notempty_;  // 队列是否为满的条件变量
+    std::condition_variable cv_notfull_;   // 队列是否为满的条件变量
+    std::condition_variable cv_notempty_;  // 队列是否为空的条件变量
     PacketQueue *pktq_;                    // 关联的 PacketQueue
 };
 
-struct VideoState {
-    std::string file_name_;
-    AVFormatContext *format_context_;
+struct AVState {
+    std::string file_name_;            // 文件名
+    AVFormatContext *format_context_;  // 封装格式上下文
 
     // ================== Audio & Video ==================
     int video_stream_idx_{-1};
@@ -154,8 +166,17 @@ constexpr double kAvNoSyncThreshold = 10.0;
 constexpr int kScreenWidth = 960;
 constexpr int kScreenHeight = 540;
 
+// ================== Logging ==================
+void InitLogger();
+
+// 日志宏定义，对应 av_log 的级别
+#define LOG_ERROR(...) spdlog::error(__VA_ARGS__)
+#define LOG_WARN(...) spdlog::warn(__VA_ARGS__)
+#define LOG_INFO(...) spdlog::info(__VA_ARGS__)
+#define LOG_DEBUG(...) spdlog::debug(__VA_ARGS__)
+
 // ================== common ==================
-void RefreshSchedule(VideoState *video_state, int delay);
+void RefreshSchedule(AVState *video_state, int delay);
 
 void SetDefaultWindowSize(int width, int height, AVRational sar);
 
@@ -166,14 +187,14 @@ void CalculateDisplayRect(SDL_Rect *rect, int screen_x_left, int screen_y_top, i
 // ================== thread ==================
 
 // ================== read thread ==================
-VideoState *OpenStream(std::string const &file_name);
+AVState *OpenStream(std::string const &file_name);
 
 int ReadThread(void *arg);
 
 // ================== video thread ==================
 int DecodeThread(void *arg);
 
-void SdlEventLoop(VideoState *video_state);
+void SdlEventLoop(AVState *video_state);
 
 // ================== audio thread ==================
 int OpenAudio(void *opaque, AVChannelLayout *wanted_channel_layout, int wanted_sample_rate);

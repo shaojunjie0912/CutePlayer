@@ -2,7 +2,7 @@
 
 // ================== core ==================
 
-// peek: 偷看(用于 FrameQueue)
+// peek: 窥视(用于 FrameQueue)
 // get: 获取(用于 PacketQueue)
 
 int InitPacketQueue(PacketQueue *q) {
@@ -24,7 +24,7 @@ int PutPacketQueueInternal(PacketQueue *q, AVPacket *pkt) {
 
     pkt1.pkt = pkt;
 
-    // 写进队列
+    // 写入队列
     ret = av_fifo_write(q->pkt_list_, &pkt1, 1);
     if (ret < 0) {
         return ret;
@@ -102,7 +102,7 @@ int InitFrameQueue(FrameQueue *f, PacketQueue *pktq, int max_size, int keep_last
     f->size_ = 0;
     f->rindex_shown_ = 0;
     f->pktq_ = pktq;
-    f->max_size_ = FFMIN(max_size, kFrameQueueSize);
+    f->max_size_ = std::min(max_size, kFrameQueueSize);
     f->keep_last_ = !!keep_last;
 
     // 初始化队列中的每个 Frame
@@ -125,7 +125,7 @@ int InitFrameQueue(FrameQueue *f, PacketQueue *pktq, int max_size, int keep_last
 //     return &f->queue_[(f->rindex_ + f->rindex_shown_) % f->max_size_];
 // }
 
-// peek 出一个可以写的 Frame，此函数可能会阻塞。
+// 窥视一个可以写的 Frame，此函数可能会阻塞。
 Frame *PeekWritableFrameQueue(FrameQueue *f) {
     std::unique_lock lk{f->mtx_};
     f->cv_notfull_.wait(lk, [&] { return f->size_ < f->max_size_; });
@@ -178,15 +178,15 @@ uint32_t MyRefreshTimerCallback(uint32_t, void *opaque) {
     return 0;
 }
 
-void RefreshSchedule(VideoState *video_state, int delay) {
-    //
+void RefreshSchedule(AVState *video_state, int delay) {
+    // 计算延迟
     SDL_AddTimer(delay, MyRefreshTimerCallback, video_state);
 }
 
 void CalculateDisplayRect(SDL_Rect *rect, int screen_x_left, int screen_y_top, int screen_width,
                           int screen_height, int picture_width, int picture_height,
                           AVRational picture_sar) {
-    // NOTE: picture_sar: sample aspect ratio 图片的像素宽高比(即图像每个像素的宽高比)
+    // 注意: picture_sar 代表 sample aspect ratio 图片的像素宽高比(即图像每个像素的宽高比)
     // 不同于 DAR(display aspect ratio) 显示的宽高比
     AVRational aspect_ratio = picture_sar;
     int64_t width, height, x, y;

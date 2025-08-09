@@ -1,18 +1,18 @@
 #include <cuteplayer/main.hpp>
 
-int AudioDecodeFrame(VideoState* video_state) {
+int AudioDecodeFrame(AVState* video_state) {
     int ret{-1};
     while (true) {
         // 从队列中读取数据
         ret = GetPacketQueue(&video_state->audio_packet_queue_, &video_state->audio_packet_, 0);
         if (ret <= 0) {
-            av_log(nullptr, AV_LOG_ERROR, "GetPacketQueue failed\n");
+            LOG_ERROR("GetPacketQueue failed");
             break;
         }
         ret = avcodec_send_packet(video_state->audio_codec_context_, &video_state->audio_packet_);
         av_packet_unref(&video_state->audio_packet_);
         if (ret < 0) {
-            av_log(nullptr, AV_LOG_ERROR, "avcodec_send_packet failed\n");
+            LOG_ERROR("avcodec_send_packet failed");
             return -1;
         }
         while (ret >= 0) {
@@ -21,7 +21,7 @@ int AudioDecodeFrame(VideoState* video_state) {
             if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
                 break;
             } else if (ret < 0) {
-                av_log(nullptr, AV_LOG_ERROR, "avcodec_receive_frame failed\n");
+                LOG_ERROR("avcodec_receive_frame failed");
                 return -1;
             }
             if (!video_state->audio_swr_context_) {
@@ -45,7 +45,7 @@ int AudioDecodeFrame(VideoState* video_state) {
                 uint8_t* const* in =
                     static_cast<uint8_t* const*>(video_state->audio_frame_.extended_data);
                 int in_count = video_state->audio_frame_.nb_samples;
-                uint8_t** out = &video_state->audio_buffer_;  // TODO: audio_buffer_ 内存泄漏问题
+                uint8_t** out = &video_state->audio_buffer_;  // 待办: audio_buffer_ 内存泄漏问题
                 int out_count = video_state->audio_frame_.nb_samples + 256;
 
                 // 重采样后输出缓冲区大小
@@ -78,14 +78,12 @@ int AudioDecodeFrame(VideoState* video_state) {
     return 0;
 }
 
-/**
- * @brief 音频回调函数(由 SDL 创建线程)
- * @param userdata 用户数据
- * @param stream 音频数据流(NOTE: 音频设备从该流中获取数据 🧀)
- * @param len 需要填充的数据长度
- */
+// 音频回调函数(由 SDL 创建线程)
+// userdata: 用户数据
+// stream: 音频数据流(注意: 音频设备从该流中获取数据)
+// len: 需要填充的数据长度
 void MyAudioCallback(void* userdata, uint8_t* stream, int len) {
-    VideoState* video_state{(VideoState*)userdata};
+    AVState* video_state{(AVState*)userdata};
     int remain_len = 0;
     while (len > 0) {
         // 缓冲区没有数据了
@@ -130,13 +128,13 @@ int OpenAudio(void* opaque, AVChannelLayout* wanted_channel_layout, int wanted_s
     wanted_spec.callback = MyAudioCallback;
     wanted_spec.userdata = opaque;
 
-    av_log(nullptr, AV_LOG_INFO, "wanted spec: channels: %d, sample_fmt: %d, sample_rate:%d\n",
-           wanted_nb_channels, AUDIO_S16SYS, wanted_sample_rate);
+    LOG_INFO("wanted spec: channels: {}, sample_fmt: {}, sample_rate: {}", wanted_nb_channels,
+             AUDIO_S16SYS, wanted_sample_rate);
 
     SDL_AudioSpec spec;
     int ret = SDL_OpenAudio(&wanted_spec, &spec);
     if (ret < 0) {
-        av_log(nullptr, AV_LOG_ERROR, "SDL_OpenAudio failed\n");
+        LOG_ERROR("SDL_OpenAudio failed");
         return -1;
     }
     return spec.size;
