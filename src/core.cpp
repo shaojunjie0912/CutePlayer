@@ -111,7 +111,7 @@ int InitFrameQueue(FrameQueue *f, PacketQueue *pktq, int max_size, int keep_last
     }
 
     for (i = 0; i < f->max_size_; i++) {
-        // 为 FrameQueue 中的 max_size 个 Frame 分配内存
+        // NOTE: 提前为 FrameQueue 中的 max_size 个 Frame 分配内存
         if (!(f->queue_[i].frame_ = av_frame_alloc())) {
             return AVERROR(ENOMEM);
         }

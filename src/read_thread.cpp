@@ -19,8 +19,8 @@ int OpenStreamComponent(AVState* video_state, uint32_t stream_index) {
     }
 
     // 创建编解码器上下文
-    AVCodecContext* codec_context{
-        avcodec_alloc_context3(codec)};  // HACK: 不能轻易释放, 否则内存泄漏
+    // HACK: 不能轻易释放, 否则内存泄漏
+    AVCodecContext* codec_context{avcodec_alloc_context3(codec)};
     if (!codec_context) {
         LOG_ERROR("avcodec_alloc_context3 failed");
         return -1;
@@ -103,7 +103,7 @@ AVState* OpenStream(std::string const& file_name) {
         return nullptr;
     }
 
-    // 初始化视频帧队列
+    // 初始化视频帧队列 (NOTE: 提前为 FrameQueue 中的 Frame(AVFrame) 分配内存)
     ret = InitFrameQueue(&video_state->video_frame_queue_, &video_state->video_packet_queue_,
                          kVideoPictureQueueSize, 1);
     if (ret < 0) {

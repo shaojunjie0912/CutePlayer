@@ -4,7 +4,7 @@
 SDL_Window* window = nullptr;
 SDL_Renderer* renderer = nullptr;
 
-// 待办: break 是否导致内存泄漏隐患?
+// TODO: break 是否导致内存泄漏隐患?
 
 int main(int argc, char* argv[]) {
     InitLogger();
