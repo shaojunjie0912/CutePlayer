@@ -1,5 +1,3 @@
-#include <fmt/core.h>
-
 #include <cuteplayer/read_thread.hpp>
 #include <string>
 
@@ -10,7 +8,6 @@ SDL_Renderer* renderer = nullptr;
 // TODO: return 的话倒也轻松
 
 int main(int argc, char* argv[]) {
-    // av_log_set_level(AV_LOG_DEBUG);
     av_log_set_level(AV_LOG_INFO);
 
     if (argc < 2) {

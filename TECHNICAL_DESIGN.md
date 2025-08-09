@@ -64,12 +64,14 @@ main.cpp
 
 ### 1. 主程序模块 (main.cpp)
 
-**职责**: 
+**职责**:
+
 - SDL 子系统初始化
 - 窗口和渲染器创建
 - 程序生命周期管理
 
 **关键流程**:
+
 ```cpp
 int main(int argc, char* argv[]) {
     // 1. 参数验证
@@ -83,6 +85,7 @@ int main(int argc, char* argv[]) {
 ### 2. 文件读取模块 (read_thread.cpp)
 
 **职责**:
+
 - 媒体文件解析和流信息提取
 - 数据包读取和分发
 - 解码器初始化和管理
@@ -101,6 +104,7 @@ int OpenStreamComponent(VideoState* video_state, uint32_t stream_index);
 ```
 
 **处理流程**:
+
 1. 使用 `avformat_open_input()` 打开文件
 2. 使用 `avformat_find_stream_info()` 获取流信息
 3. 遍历流，找到音频和视频流索引
@@ -110,6 +114,7 @@ int OpenStreamComponent(VideoState* video_state, uint32_t stream_index);
 ### 3. 视频处理模块 (video_thread.cpp)
 
 **职责**:
+
 - 视频数据包解码
 - 视频帧队列管理
 - 音视频同步控制
@@ -132,6 +137,7 @@ double SyschronizeVideo(VideoState* video_state, AVFrame* frame, double pts);
 ```
 
 **同步算法**:
+
 ```cpp
 // 计算时间差
 double diff = video_pts - audio_clock;
@@ -149,6 +155,7 @@ if (fabs(diff) < AV_NOSYNC_THRESHOLD) {
 ### 4. 音频处理模块 (audio_thread.cpp)
 
 **职责**:
+
 - 音频数据包解码
 - 音频重采样
 - 音频时钟计算
@@ -168,6 +175,7 @@ int OpenAudio(void* opaque, AVChannelLayout* wanted_channel_layout, int wanted_s
 ```
 
 **音频处理流程**:
+
 1. 从音频包队列获取数据包
 2. 使用 `avcodec_send_packet()` 和 `avcodec_receive_frame()` 解码
 3. 使用 SwrContext 进行重采样（转换为 S16 格式）
@@ -229,6 +237,7 @@ struct PacketQueue {
 ```
 
 **关键操作**:
+
 - `InitPacketQueue()`: 初始化队列，分配 FIFO 内存
 - `PutPacketQueue()`: 线程安全地添加数据包
 - `GetPacketQueue()`: 线程安全地获取数据包，支持阻塞/非阻塞模式
@@ -250,6 +259,7 @@ struct FrameQueue {
 ```
 
 **环形缓冲机制**:
+
 ```cpp
 // 写入时的索引更新
 void MoveWriteIndex(FrameQueue *f) {
@@ -622,4 +632,4 @@ public:
 
 ---
 
-本文档详细描述了 CutePlayer 的技术实现细节，为后续的维护和扩展提供了全面的技术参考。 
+本文档详细描述了 CutePlayer 的技术实现细节，为后续的维护和扩展提供了全面的技术参考。
