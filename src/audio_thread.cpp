@@ -1,4 +1,4 @@
-#include <cuteplayer/audio_thread.hpp>
+#include <cuteplayer/main.hpp>
 
 int AudioDecodeFrame(VideoState* video_state) {
     int ret{-1};
@@ -16,7 +16,8 @@ int AudioDecodeFrame(VideoState* video_state) {
             return -1;
         }
         while (ret >= 0) {
-            ret = avcodec_receive_frame(video_state->audio_codec_context_, &video_state->audio_frame_);
+            ret = avcodec_receive_frame(video_state->audio_codec_context_,
+                                        &video_state->audio_frame_);
             if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
                 break;
             } else if (ret < 0) {
@@ -25,32 +26,36 @@ int AudioDecodeFrame(VideoState* video_state) {
             }
             if (!video_state->audio_swr_context_) {
                 AVChannelLayout in_ch_layout, out_ch_layout;
-                av_channel_layout_copy(&in_ch_layout, &video_state->audio_codec_context_->ch_layout);
+                av_channel_layout_copy(&in_ch_layout,
+                                       &video_state->audio_codec_context_->ch_layout);
                 av_channel_layout_copy(&out_ch_layout, &in_ch_layout);
 
                 // 重采样
                 if (video_state->audio_codec_context_->sample_fmt != AV_SAMPLE_FMT_S16) {
-                    swr_alloc_set_opts2(&video_state->audio_swr_context_, &out_ch_layout, AV_SAMPLE_FMT_S16,
-                                        video_state->audio_codec_context_->sample_rate, &in_ch_layout,
-                                        video_state->audio_codec_context_->sample_fmt,
-                                        video_state->audio_codec_context_->sample_rate, 0, nullptr);
+                    swr_alloc_set_opts2(
+                        &video_state->audio_swr_context_, &out_ch_layout, AV_SAMPLE_FMT_S16,
+                        video_state->audio_codec_context_->sample_rate, &in_ch_layout,
+                        video_state->audio_codec_context_->sample_fmt,
+                        video_state->audio_codec_context_->sample_rate, 0, nullptr);
                     swr_init(video_state->audio_swr_context_);
                 }
             }
             int data_size{0};
             if (video_state->audio_swr_context_) {
-                uint8_t* const* in = static_cast<uint8_t* const*>(video_state->audio_frame_.extended_data);
+                uint8_t* const* in =
+                    static_cast<uint8_t* const*>(video_state->audio_frame_.extended_data);
                 int in_count = video_state->audio_frame_.nb_samples;
                 uint8_t** out = &video_state->audio_buffer_;  // TODO: audio_buffer_ 内存泄漏问题
                 int out_count = video_state->audio_frame_.nb_samples + 256;
 
                 // 重采样后输出缓冲区大小
                 // = 2 * 2 * video_state->audio_frame_.nb_samples
-                int out_size =
-                    av_samples_get_buffer_size(nullptr, video_state->audio_frame_.ch_layout.nb_channels,
-                                               out_count, AV_SAMPLE_FMT_S16, 0);
+                int out_size = av_samples_get_buffer_size(
+                    nullptr, video_state->audio_frame_.ch_layout.nb_channels, out_count,
+                    AV_SAMPLE_FMT_S16, 0);
                 // 重新分配 audio_buffer_ 内存
-                av_fast_malloc(&video_state->audio_buffer_, &video_state->audio_buffer_size_, out_size);
+                av_fast_malloc(&video_state->audio_buffer_, &video_state->audio_buffer_size_,
+                               out_size);
 
                 // 重采样 -> 返回每个通道的样本数
                 int nb_ch_samples =
@@ -61,8 +66,8 @@ int AudioDecodeFrame(VideoState* video_state) {
             // HACK: 关键 计算音频时钟
             if (!isnan(video_state->audio_frame_.pts)) {
                 video_state->audio_clock_ =
-                    video_state->audio_frame_.pts +
-                    (double)video_state->audio_frame_.nb_samples / video_state->audio_frame_.sample_rate;
+                    video_state->audio_frame_.pts + (double)video_state->audio_frame_.nb_samples /
+                                                        video_state->audio_frame_.sample_rate;
             } else {
                 video_state->audio_clock_ = NAN;
             }
@@ -101,7 +106,8 @@ void MyAudioCallback(void* userdata, uint8_t* stream, int len) {
         }
         if (video_state->audio_buffer_) {
             // 如果音频缓冲区有数据，拷贝到 stream 中
-            memcpy(stream, video_state->audio_buffer_ + video_state->audio_buffer_index_, remain_len);
+            memcpy(stream, video_state->audio_buffer_ + video_state->audio_buffer_index_,
+                   remain_len);
         } else {
             memset(stream, 0, remain_len);  // 静音
         }

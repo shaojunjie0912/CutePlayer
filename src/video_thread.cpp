@@ -1,4 +1,4 @@
-#include <cuteplayer/video_thread.hpp>
+#include <cuteplayer/main.hpp>
 
 extern SDL_Window* window;
 extern SDL_Renderer* renderer;
@@ -43,8 +43,8 @@ void DisplayVideo(VideoState* video_state) {
                          video_state->height_, vp->width_, vp->height_, vp->sar_);
 
     // 渲染
-    SDL_UpdateYUVTexture(video_state->texture_, nullptr, frame->data[0], frame->linesize[0], frame->data[1],
-                         frame->linesize[1], frame->data[2], frame->linesize[2]);
+    SDL_UpdateYUVTexture(video_state->texture_, nullptr, frame->data[0], frame->linesize[0],
+                         frame->data[1], frame->linesize[1], frame->data[2], frame->linesize[2]);
     SDL_RenderClear(renderer);
     SDL_RenderCopy(renderer, video_state->texture_, nullptr, &rect);
     SDL_RenderPresent(renderer);
@@ -131,7 +131,8 @@ void SdlEventLoop(VideoState* video_state) {
     }
 }
 
-int QueuePicture(VideoState* video_state, AVFrame* src_frame, double pts, double duration, int64_t pos) {
+int QueuePicture(VideoState* video_state, AVFrame* src_frame, double pts, double duration,
+                 int64_t pos) {
     Frame* vp;
     if (!(vp = PeekWritableFrameQueue(&video_state->video_frame_queue_))) {
         av_log(nullptr, AV_LOG_ERROR, "PeekWritableFrameQueue failed\n");

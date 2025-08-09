@@ -1,11 +1,10 @@
-#include <cuteplayer/read_thread.hpp>
+#include <cuteplayer/main.hpp>
 #include <string>
 
 SDL_Window* window = nullptr;
 SDL_Renderer* renderer = nullptr;
 
-// TODO: 很多break存在内存泄漏隐患
-// TODO: return 的话倒也轻松
+// TODO: break 是否导致内存泄漏隐患?
 
 int main(int argc, char* argv[]) {
     av_log_set_level(AV_LOG_INFO);
@@ -23,8 +22,9 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 
-    window = SDL_CreateWindow("CutePlayer", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, kDefaultWidth,
-                              kDefaultHeight, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
+    window =
+        SDL_CreateWindow("CutePlayer", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
+                         kDefaultWidth, kDefaultHeight, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
 
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
 

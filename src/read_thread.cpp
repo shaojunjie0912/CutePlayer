@@ -1,4 +1,4 @@
-#include <cuteplayer/read_thread.hpp>
+#include <cuteplayer/main.hpp>
 
 int OpenStreamComponent(VideoState* video_state, uint32_t stream_index);
 
@@ -154,7 +154,8 @@ int OpenStreamComponent(VideoState* video_state, uint32_t stream_index) {
     }
 
     // 创建 codec context
-    AVCodecContext* codec_context{avcodec_alloc_context3(codec)};  // HACK: 不能轻易释放, 否则内存泄漏
+    AVCodecContext* codec_context{
+        avcodec_alloc_context3(codec)};  // HACK: 不能轻易释放, 否则内存泄漏
     if (!codec_context) {
         av_log(nullptr, AV_LOG_ERROR, "avcodec_alloc_context3 failed\n");
         return -1;

@@ -4,9 +4,19 @@
 #include <mutex>
 #include <string>
 
-//
-#include <cuteplayer/ffmpeg.hpp>
+// ================== FFmpeg ==================
+extern "C" {
+#define SDL_MAIN_HANDLED
+#include <SDL2/SDL.h>
+#include <libavcodec/avcodec.h>
+#include <libavformat/avformat.h>
+#include <libavutil/fifo.h>
+#include <libavutil/log.h>
+#include <libavutil/time.h>
+#include <libswresample/swresample.h>
+}
 
+// ================== core ==================
 constexpr int kFrameQueueSize = 16;
 
 struct MyAVPacketList {
@@ -40,7 +50,7 @@ struct FrameQueue {
     int size_;                     /* 队列中的帧数 */
     int max_size_;                 /* 队列最大缓存的帧数 */
     int keep_last_;                /* 播放后是否在队列中保留上一帧不销毁 */
-    int rindex_shown_;             /* keep_last的实现，读的时候实际上读的是rindex + rindex_shown，分析见下 */
+    int rindex_shown_; /* keep_last的实现，读的时候实际上读的是rindex + rindex_shown，分析见下 */
     std::mutex mtx_;
     std::condition_variable cv_notfull_;   // 队列是否为空的条件变量
     std::condition_variable cv_notempty_;  // 队列是否为满的条件变量
@@ -128,3 +138,42 @@ void MoveReadIndex(FrameQueue *f);  // 将读索引后移
 Frame *PeekWritableFrameQueue(FrameQueue *f);
 
 Frame *PeekFrameQueue(FrameQueue *f);
+
+// ================== const ==================
+constexpr int kDefaultWidth = 960;
+constexpr int kDefaultHeight = 540;
+// constexpr int kScreenLeft = SDL_WINDOWPOS_CENTERED; // 窗口左上角的 x 坐标
+// constexpr int kScreenTop = SDL_WINDOWPOS_CENTERED;  // 窗口左上角的 y 坐标
+constexpr int kVideoPictureQueueSize = 3;
+constexpr int kFFRefreshEvent = SDL_USEREVENT + 1;
+constexpr int kMaxQueueSize = 15 * 1024 * 1024;
+constexpr int kSdlAudioBufferSize = 1024;
+constexpr double kMaxAvSyncThreshold = 0.1;
+constexpr double kMinAvSyncThreshold = 0.04;
+constexpr double kAvNoSyncThreshold = 10.0;
+constexpr int kScreenWidth = 960;
+constexpr int kScreenHeight = 540;
+
+// ================== common ==================
+void RefreshSchedule(VideoState *video_state, int delay);
+
+void SetDefaultWindowSize(int width, int height, AVRational sar);
+
+void CalculateDisplayRect(SDL_Rect *rect, int screen_x_left, int screen_y_top, int screen_width,
+                          int screen_height, int picture_width, int picture_height,
+                          AVRational picture_sar);
+
+// ================== thread ==================
+
+// ================== read thread ==================
+VideoState *OpenStream(std::string const &file_name);
+
+int ReadThread(void *arg);
+
+// ================== video thread ==================
+int DecodeThread(void *arg);
+
+void SdlEventLoop(VideoState *video_state);
+
+// ================== audio thread ==================
+int OpenAudio(void *opaque, AVChannelLayout *wanted_channel_layout, int wanted_sample_rate);
