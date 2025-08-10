@@ -6,7 +6,6 @@
 
 // ================== FFmpeg & SDL ==================
 extern "C" {
-#define SDL_MAIN_HANDLED
 #include <SDL2/SDL.h>
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
@@ -14,6 +13,7 @@ extern "C" {
 #include <libavutil/log.h>
 #include <libavutil/time.h>
 #include <libswresample/swresample.h>
+#define SDL_MAIN_HANDLED
 }
 
 // ================== Project Headers ==================

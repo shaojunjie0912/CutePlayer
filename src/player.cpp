@@ -5,6 +5,7 @@
 // TODO: 没有 std::stop_token 就用 stop 标志位
 // NOTE: 一个 AVPacket 可能对应一个或多个 AVFrame
 // 但也可能多个 AVPacket 才可以解码出一个 AVFrame (比如: 帧间依赖)
+// TODO: 仔细思考每个分支的返回值
 
 namespace cuteplayer {
 
@@ -150,11 +151,43 @@ Player::Player(std::string file_path)
       video_packet_queue_(kMaxPacketQueueDataBytes),
       audio_packet_queue_(kMaxPacketQueueDataBytes),
       video_frame_queue_(kMaxFrameQueueSize, true),
-      audio_frame_(av_frame_alloc()) {
-    // TODO:
-    // OpenStreamComponent(video_stream_idx_);
-    // OpenStreamComponent(audio_stream_idx_);
-    // StartThreads();
+      audio_frame_(av_frame_alloc()),
+      running_(true) {
+    InitSDL();
+    OpenInputFile();
+    FindStreams();
+    if (video_stream_idx_ != -1) {
+        OpenStreamComponent(video_stream_idx_);
+    }
+    if (audio_stream_idx_ != -1) {
+        OpenStreamComponent(audio_stream_idx_);
+    }
+    StartThreads();
+}
+
+Player::~Player() {
+    // 通知线程退出
+    running_.store(false);
+
+    // 关闭队列以唤醒任何等待中的线程
+    video_packet_queue_.Close();
+    audio_packet_queue_.Close();
+
+    // 停止音频回调
+    SDL_PauseAudio(1);
+
+    // 推送一个退出事件以唤醒可能阻塞在 SDL_WaitEvent 的线程
+    SDL_Event quit_event;
+    quit_event.type = SDL_QUIT;
+    SDL_PushEvent(&quit_event);
+
+    // 提前释放与 SDL 相关的资源，再调用 SDL_Quit
+    texture_.reset();
+    renderer_.reset();
+    window_.reset();
+
+    // 关闭 SDL 子系统
+    SDL_Quit();
 }
 
 void Player::InitSDL() {
@@ -263,7 +296,7 @@ void Player::OpenStreamComponent(int stream_index) {
             throw std::runtime_error("SDL_OpenAudio 失败: " + std::string(SDL_GetError()));
         }
         // 如果音频格式不是 S16, 则需要重采样
-        if (codec_context->sample_fmt != AV_SAMPLE_FMT_S16) {
+        if (audio_codec_ctx_->sample_fmt != AV_SAMPLE_FMT_S16) {
             // C++ 的 RAII 智能指针与 C 风格的“出参”函数正确地协同工作: 临时裸指针作为「中间人」
             SwrContext* tmp_swr_ctx{nullptr};
             // Setup resampler
@@ -330,72 +363,56 @@ void Player::ReadLoop() {
     LOG_INFO("读取线程结束");
 }
 
-void Player::VideoDecodeLoop() { LOG_INFO(""); }
-
 // 返回的是音频帧的数量
 int Player::DecodeAudioFrame() {
-    int ret{0};
-    while (true) {
+    while (running_.load()) {
         // TODO: TryPop?
         auto packet{audio_packet_queue_.TryPop()};
         if (!packet) {
-            // TODO: 音频包队列为空 应该返回 0 吗? 静音
-            // 是否应该把 receive 放上面
+            // TODO: 音频包队列为空 应该返回 0 静音 还是 等待后再重新取
             return 0;
         }
 
         // avcodec_send_packet: 异步发送一个 AVPacket 到解码器(解码器内部维护一个 AVPacket 队列)
-        ret = avcodec_send_packet(audio_codec_ctx_.get(), packet->get());
-        // TODO: 这里直接unref对下面有影响吗?
-        av_packet_unref(packet->get());  // 由于解码器复制了, 所以我们自己的引用计数减一, 不需要了
-        if (ret < 0) {
-            if (ret == AVERROR(EAGAIN)) {
-                // 这是一个状态信号，不是错误。我们记录一下，然后正常继续到 receive 环节。
-                // 解码器输入缓冲区满了, 需要取走一些 AVFrame, 再重新把这个 packet 送进去
-                LOG_DEBUG("avcodec_send_packet() 需要 receive, ret: EAGAIN");
-            } else if (ret == AVERROR_EOF) {
-                // 发送流已结束，这也是正常状态。
-                // 之前发送了一个 null packet 冲刷解码器
-                LOG_INFO("avcodec_send_packet() 收到 EOF");
-            } else {
-                // 真正的致命错误！立即停止。
-                LOG_ERROR("avcodec_send_packet() 发生错误: {}", av_err2str(ret));
-                return ret;
-            }
+        int ret = avcodec_send_packet(audio_codec_ctx_.get(), packet->get());
+
+        if (ret == 0) {  // 发送成功
+            av_packet_unref(packet->get());
+        } else if (ret == AVERROR(EAGAIN)) {  // 解码器内部缓冲区已满, 先取走一些 AVFrame
+            LOG_DEBUG("音频 avcodec_send_packet 需要 receive, ret: EAGAIN");
+        } else {  // EOF 或致命错误
+            LOG_ERROR("音频 avcodec_send_packet EOF/发生错误: {}", av_err2str(ret));
+            av_packet_unref(packet->get());
+            return ret;
         }
 
         // 循环调用 avcodec_receive_frame 以获取所有可能产生的帧 (0,1,...)
-        while (ret >= 0) {
+        while (running_.load()) {
             ret = avcodec_receive_frame(audio_codec_ctx_.get(), audio_frame_.get());
-            if (ret == AVERROR(EAGAIN)) {
-                // EAGAIN: 需要更多 packet 才能输出 frame, 退出内层循环去读下一个 packet
-                break;
-            } else if (ret == AVERROR_EOF) {
-                // EOF: 解码器已完全刷新，没有更多 frame 了
-                return -1;  // TODO: 不需要考虑已经生成的帧数量吗
-            } else if (ret < 0) {
-                // 真正的解码错误
-                LOG_ERROR("avcodec_receive_frame 发生错误");
-                return ret;
+            if (ret < 0) {
+                if (ret == AVERROR(EAGAIN)) {  // 需要更多 packet
+                    break;
+                } else {  // 解码结束或致命错误
+                    LOG_ERROR("音频 avcodec_receive_frame EOF/发生错误: {}", av_err2str(ret));
+                    av_frame_unref(audio_frame_.get());  // 清空 frame 的引用计数
+                    return -1;
+                }
             }
             // 正常情况
-            LOG_INFO("成功解码一帧, pts: {}, dts: {}", audio_frame_->pts, audio_frame_->pkt_dts);
             int frame_cnt{0};
             auto in = static_cast<uint8_t* const*>(audio_frame_.get()->extended_data);
             int in_count = audio_frame_.get()->nb_samples;
-            // uint8_t** out = &audio_buffer_;
-            // 比输入多 256 是一个安全余量
-            // 因为重采样过程中可能会有轻微的延迟和缓存, 导致输出样本数略多于输入
+            // 256 是一个安全余量, 因为重采样过程中可能会有轻微的延迟和缓存,
+            // 导致输出样本数略多于输入
             int out_count = audio_frame_.get()->nb_samples + 256;
 
-            // 重采样后输出缓冲区大小
-            // = 2 * 2 * audio_frame_.nb_samples
+            // 重采样后输出缓冲区大小 = 2 * 2 * audio_frame_.nb_samples
             int out_size =
                 av_samples_get_buffer_size(nullptr, audio_frame_.get()->ch_layout.nb_channels,
                                            out_count, AV_SAMPLE_FMT_S16, 0);
             // 重新分配 audio_buffer_ 内存
             audio_buffer_.resize(out_size);
-            auto out = &audio_buffer_[0];
+            auto out = audio_buffer_.data();
 
             // 重采样 -> 返回每个通道的样本数
             int nb_ch_samples = swr_convert(audio_swr_ctx_.get(), &out, out_count, in, in_count);
@@ -420,6 +437,7 @@ int Player::DecodeAudioFrame() {
             return frame_cnt;
         }
     }
+    return 0;
 }
 
 // 音频回调函数(由 SDL 创建线程)
@@ -439,7 +457,7 @@ void Player::AudioCallback(uint8_t* stream, int len) {
     // 缓冲区没有数据了
     while (len > 0) {
         // 已经发送我们所有的数据，需要获取更多数据
-        // TODO: 为什么用 audio_buf_size_ 而不是直接 audio_buffer_.size()?
+        // TODO: 这里的 audio_buf_size_ 跟 audio_buffer_.size() 是否不对应?
         if (audio_buf_index_ >= audio_buf_size_) {
             int decoded_size = DecodeAudioFrame();
             if (decoded_size <= 0) {
@@ -469,6 +487,213 @@ void Player::StartThreads() {
     // 启动音频回调
     if (audio_stream_) {
         SDL_PauseAudio(0);
+    }
+}
+
+void Player::VideoDecodeLoop() {
+    LOG_INFO("视频解码线程开始");
+    UniqueAVFrame frame{av_frame_alloc()};
+    while (running_.load()) {
+        auto packet = video_packet_queue_.TryPop();
+        // TODO: 为什么视频就等待而音频直接return了
+        if (!packet) {
+            LOG_DEBUG("没有获取到视频包, 等待 10 ms...");
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+        }
+
+        int ret = avcodec_send_packet(video_codec_ctx_.get(), packet->get());
+        if (ret == 0) {  // 发送成功
+            av_packet_unref(packet->get());
+        } else if (ret == AVERROR(EAGAIN)) {  // 解码器内部缓冲区已满, 先取走一些 AVFrame
+            LOG_DEBUG("视频 avcodec_send_packet 需要 receive, ret: EAGAIN");
+        } else {  // EOF 或致命错误
+            LOG_ERROR("视频 avcodec_send_packet EOF/发生错误: {}", av_err2str(ret));
+            av_packet_unref(packet->get());
+            return;
+        }
+
+        while (running_.load()) {
+            ret = avcodec_receive_frame(video_codec_ctx_.get(), frame.get());
+            if (ret < 0) {
+                if (ret == AVERROR(EAGAIN)) {  // 需要更多 packet
+                    break;
+                } else {
+                    LOG_ERROR("视频 avcodec_receive_frame EOF/发生错误: {}", av_err2str(ret));
+                    av_frame_unref(frame.get());
+                    return;
+                }
+            }
+            double pts =
+                (frame->pts == AV_NOPTS_VALUE) ? 0 : frame->pts * av_q2d(video_stream_->time_base);
+            pts = SynchronizeVideo(frame.get(), pts);
+
+            // TODO: 以下代码可能不正确, 内存泄露/不必要的拷贝
+            auto writable_frame_opt = video_frame_queue_.PeekWritable();
+            if (writable_frame_opt) {
+                DecodedFrame* df = writable_frame_opt;
+                av_frame_move_ref(df->frame.get(), frame.get());
+                df->pts = pts;
+                video_frame_queue_.Push();
+            }
+            av_frame_unref(frame.get());
+        }
+    }
+    LOG_INFO("视频解码线程结束");
+}
+
+uint32_t Player::VideoRefreshTimerWrapper(uint32_t /*interval*/, void* opaque) {
+    SDL_Event event;
+    event.type = kFFRefreshEvent;
+    event.user.data1 = opaque;
+    SDL_PushEvent(&event);
+    return 0;  // The timer will not repeat
+}
+
+void Player::ScheduleNextVideoRefresh(int delay_ms) {
+    SDL_AddTimer(delay_ms, VideoRefreshTimerWrapper, this);
+}
+
+void Player::VideoRefreshHandler() {
+    if (!video_stream_) {  // TODO: 是否要考虑停止标志位
+        return;
+    }
+
+    auto frame_opt = video_frame_queue_.PeekReadable();
+    if (!frame_opt) {
+        ScheduleNextVideoRefresh(1);  // No frame, try again quickly
+        return;
+    }
+
+    const DecodedFrame* current_frame = frame_opt;
+    double pts = current_frame->pts;
+    double delay = pts - frame_last_pts_;
+    if (delay <= 0 || delay >= 1.0) {
+        delay = frame_last_delay_;
+    }
+    frame_last_delay_ = delay;
+    frame_last_pts_ = pts;
+
+    double ref_clock = GetMasterClock();
+    double diff = pts - ref_clock;
+
+    double sync_threshold = std::max(delay, kMinAvSyncThreshold);
+    if (std::abs(diff) < kAvNoSyncThreshold) {
+        if (diff <= -sync_threshold) {  // video is behind
+            delay = std::max(0.0, delay + diff);
+        } else if (diff >= sync_threshold) {  // video is ahead
+            delay = delay + diff;
+        }
+    }
+
+    frame_timer_ += delay;
+    double actual_delay = frame_timer_ - (static_cast<double>(av_gettime()) / 1000000.0);
+    if (actual_delay < 0.010) {
+        actual_delay = 0.010;
+    }
+
+    ScheduleNextVideoRefresh(static_cast<int>(actual_delay * 1000 + 0.5));
+
+    RenderVideoFrame();
+    video_frame_queue_.Pop();
+}
+
+void Player::RenderVideoFrame() {
+    auto frame_opt = video_frame_queue_.PeekReadable();
+    if (!frame_opt) return;
+
+    const AVFrame* frame = frame_opt->frame.get();
+
+    if (!texture_) {
+        texture_.reset(SDL_CreateTexture(renderer_.get(), SDL_PIXELFORMAT_IYUV,
+                                         SDL_TEXTUREACCESS_STREAMING, frame->width, frame->height));
+        if (!texture_) {
+            LOG_ERROR("Cannot create SDL texture: {}", SDL_GetError());
+            return;
+        }
+    }
+
+    SDL_UpdateYUVTexture(texture_.get(), nullptr, frame->data[0], frame->linesize[0],
+                         frame->data[1], frame->linesize[1], frame->data[2], frame->linesize[2]);
+
+    SDL_Rect rect;
+    CalculateDisplayRect(&rect, frame->width, frame->height, frame->sample_aspect_ratio);
+
+    SDL_RenderClear(renderer_.get());
+    SDL_RenderCopy(renderer_.get(), texture_.get(), nullptr, &rect);
+    SDL_RenderPresent(renderer_.get());
+}
+
+double Player::SynchronizeVideo(const AVFrame* frame, double pts) {
+    if (pts != 0) {
+        video_clock_ = pts;
+    } else {
+        pts = video_clock_;
+    }
+    double frame_delay = av_q2d(video_stream_->time_base);
+    frame_delay += frame->repeat_pict * (frame_delay * 0.5);
+    video_clock_ += frame_delay;
+    return pts;
+}
+
+double Player::GetMasterClock() const {
+    if (audio_stream_) {
+        return audio_clock_;
+    }
+    return GetVideoClock();
+}
+
+double Player::GetVideoClock() const { return video_clock_; }
+
+void Player::CalculateDisplayRect(SDL_Rect* rect, int pic_width, int pic_height,
+                                  AVRational pic_sar) {
+    float aspect_ratio;
+    if (pic_sar.num == 0 || pic_sar.den == 0) {
+        aspect_ratio = 0;
+    } else {
+        aspect_ratio = av_q2d(pic_sar);
+    }
+
+    if (aspect_ratio <= 0.0) {
+        aspect_ratio = 1.0;
+    }
+    aspect_ratio *= static_cast<float>(pic_width) / static_cast<float>(pic_height);
+
+    int win_w, win_h;
+    SDL_GetWindowSize(window_.get(), &win_w, &win_h);
+
+    int h = win_h;
+    int w = static_cast<int>(round(h * aspect_ratio));
+    if (w > win_w) {
+        w = win_w;
+        h = static_cast<int>(round(w / aspect_ratio));
+    }
+
+    rect->x = (win_w - w) / 2;
+    rect->y = (win_h - h) / 2;
+    rect->w = w;
+    rect->h = h;
+}
+
+void Player::Run() {
+    if (!video_stream_ && !audio_stream_) {
+        LOG_ERROR("没有找到视频或音频流");
+        return;
+    }
+    ScheduleNextVideoRefresh(40);
+    SDL_Event event;
+    while (running_.load()) {
+        SDL_WaitEvent(&event);
+        switch (event.type) {
+            case SDL_QUIT:
+                running_.store(false);  // TODO: 要有锁 + 条件变量还是 stop_token
+                break;
+            case kFFRefreshEvent:       //
+                VideoRefreshHandler();  // 视频刷新
+                break;
+            default:
+                break;
+        }
     }
 }
 

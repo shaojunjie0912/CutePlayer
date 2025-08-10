@@ -124,20 +124,34 @@ public:
     void Run();
 
 public:
+    // =============== 初始化 ===============
     void InitSDL();
     void OpenInputFile();
     void FindStreams();
     void OpenStreamComponent(int stream_index);
+    void StartThreads();
 
+    // =============== 线程循环 ===============
     void ReadLoop();
     void VideoDecodeLoop();
 
+    // =============== 音频处理 ===============
     static void AudioCallbackWrapper(void* userdata, uint8_t* stream, int len);
     void AudioCallback(uint8_t* stream, int len);
-
     int DecodeAudioFrame();
 
-    void StartThreads();
+    // =============== 视频处理 ===============
+    static uint32_t VideoRefreshTimerWrapper(uint32_t interval, void* opaque);
+    void ScheduleNextVideoRefresh(int delay_ms);
+    void VideoRefreshHandler();
+    void RenderVideoFrame();
+    double GetVideoClock() const;
+    void SetVideoClock(double pts);
+    double SynchronizeVideo(const AVFrame* frame, double pts);
+    void CalculateDisplayRect(SDL_Rect* rect, int pic_width, int pic_height, AVRational pic_sar);
+
+    // =============== 时钟同步 ===============
+    double GetMasterClock() const;
 
 private:
     std::string file_path_;

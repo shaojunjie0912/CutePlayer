@@ -13,7 +13,7 @@ int main(int argc, char* argv[]) {
 
     try {
         cuteplayer::Player player(argv[1]);
-        player.RunEventLoop();
+        player.Run();
     } catch (const std::runtime_error& e) {
         LOG_ERROR("A critical error occurred: {}", e.what());
         // 清理在 player 构造失败前已初始化的资源
