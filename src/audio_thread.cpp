@@ -1,8 +1,9 @@
 #include <cuteplayer/main.hpp>
 
+// MyAudioCallback 发现没数据了就调用这个解码更多的音频帧 PCM?
 int AudioDecodeFrame(AVState* video_state) {
     int ret{-1};
-    while (true) {
+    while (true) { // TODO: 这里一直读
         // 从队列中读取数据
         ret = GetPacketQueue(&video_state->audio_packet_queue_, &video_state->audio_packet_, 0);
         if (ret <= 0) {
@@ -10,6 +11,7 @@ int AudioDecodeFrame(AVState* video_state) {
             break;
         }
         ret = avcodec_send_packet(video_state->audio_codec_context_, &video_state->audio_packet_);
+        // TODO: 这里为什么要 unref
         av_packet_unref(&video_state->audio_packet_);
         if (ret < 0) {
             LOG_ERROR("avcodec_send_packet failed");
@@ -19,7 +21,7 @@ int AudioDecodeFrame(AVState* video_state) {
             ret = avcodec_receive_frame(video_state->audio_codec_context_,
                                         &video_state->audio_frame_);
             if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
-                break;
+                break; // 退出内部 while 循环
             } else if (ret < 0) {
                 LOG_ERROR("avcodec_receive_frame failed");
                 return -1;
@@ -45,7 +47,7 @@ int AudioDecodeFrame(AVState* video_state) {
                 uint8_t* const* in =
                     static_cast<uint8_t* const*>(video_state->audio_frame_.extended_data);
                 int in_count = video_state->audio_frame_.nb_samples;
-                uint8_t** out = &video_state->audio_buffer_;  // 待办: audio_buffer_ 内存泄漏问题
+                uint8_t** out = &video_state->audio_buffer_;  // TODO: audio_buffer_ 内存泄漏问题
                 int out_count = video_state->audio_frame_.nb_samples + 256;
 
                 // 重采样后输出缓冲区大小

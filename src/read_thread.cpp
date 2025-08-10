@@ -67,7 +67,7 @@ int OpenStreamComponent(AVState* video_state, uint32_t stream_index) {
     else if (codec_context->codec_type == AVMEDIA_TYPE_VIDEO) {
         video_state->video_stream_idx_ = stream_index;
         video_state->video_stream_ = stream;
-        video_state->video_codec_context_ = codec_context;  // 待办: 为什么音频编码器上下文没有存?
+        video_state->video_codec_context_ = codec_context;  // TODO: 为什么音频编码器上下文没有存?
 
         // 音视频同步相关字段
         video_state->frame_timer_ = (double)av_gettime() / 1000000.0;
@@ -159,7 +159,7 @@ int ReadThread(void* arg) {
     AVCodecParameters* codec_params{stream->codecpar};
     AVRational sar{av_guess_sample_aspect_ratio(format_context, stream, nullptr)};
     if (codec_params->width) {
-        // 待办: 设置默认窗口大小
+        // TODO: 设置默认窗口大小
         SetDefaultWindowSize(codec_params->width, codec_params->height, sar);
     }
 
@@ -194,7 +194,7 @@ int ReadThread(void* arg) {
             }
         }
 
-        // 保存包到队列
+        // 保存包到队列 (HACK: 内部会复制 packet)
         if (packet->stream_index == video_state->video_stream_idx_) {
             PutPacketQueue(&video_state->video_packet_queue_, packet);  // 保存视频包
         } else if (packet->stream_index == video_state->audio_stream_idx_) {
