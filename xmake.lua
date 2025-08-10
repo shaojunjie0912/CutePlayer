@@ -19,3 +19,5 @@ target("cuteplayer", function ()
     add_packages("libsdl2", "ffmpeg", "spdlog")
 end)
 
+
+
