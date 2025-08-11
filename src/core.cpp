@@ -84,7 +84,10 @@ FrameQueue::FrameQueue(int max_size, bool keep_last_frame)
 // TODO: PeekWritable + MoveWriteIndex 是否应该合并?
 DecodedFrame* FrameQueue::PeekWritable() {
     std::unique_lock lk{mtx_};
-    cv_can_write_.wait(lk, [this] { return size_ < max_size_; });
+    cv_can_write_.wait(lk, [this] { return closed_ || size_ < max_size_; });
+    if (closed_) {
+        return nullptr;
+    }
     return &decoded_frames_[windex_];
 }
 
@@ -100,7 +103,10 @@ void FrameQueue::MoveWriteIndex() {
 // TODO: PeekReadable + MoveReadIndex 是否应该合并?
 DecodedFrame* FrameQueue::PeekReadable() {
     std::unique_lock lk{mtx_};
-    cv_can_read_.wait(lk, [this] { return size_ > 0; });
+    cv_can_read_.wait(lk, [this] { return closed_ || size_ > 0; });
+    if (closed_ && size_ == 0) {
+        return nullptr;
+    }
     return &decoded_frames_[rindex_];
 }
 
@@ -142,6 +148,18 @@ void FrameQueue::MoveReadIndex() {
 std::size_t FrameQueue::GetSize() const {
     std::lock_guard lk{mtx_};
     return size_;
+}
+
+void FrameQueue::Close() {
+    std::unique_lock lk{mtx_};
+    if (closed_) {
+        return;
+    }
+    closed_ = true;
+    // 唤醒可能在等待写入的线程 (生产者)
+    cv_can_write_.notify_all();
+    // 唤醒可能在等待读取的线程 (消费者)
+    cv_can_read_.notify_all();
 }
 
 }  // namespace cuteplayer

@@ -15,6 +15,7 @@ int main(int argc, char* argv[]) {
     try {
         cuteplayer::Player player{argv[1]};
         player.Run();
+        LOG_INFO("播放器退出!");
     } catch (const std::runtime_error& e) {
         LOG_ERROR("播放器运行失败! 错误信息: {}", e.what());
         SDL_Quit();

@@ -196,6 +196,9 @@ public:
 
     std::size_t GetSize() const;
 
+    // 关闭队列
+    void Close();
+
 private:
     size_t rindex_{0};        // 读取索引
     size_t windex_{0};        // 写入索引
@@ -209,6 +212,7 @@ private:
     std::condition_variable cv_can_read_;
     mutable std::mutex mtx_;
     bool keep_last_frame_;  // 播放后是否在队列中保留上一帧不销毁
+    bool closed_{false};    // 队列是否已关闭
 };
 
 }  // namespace cuteplayer

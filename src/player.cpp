@@ -38,6 +38,7 @@ Player::~Player() {
     // 关闭队列以唤醒任何等待中的线程
     video_packet_queue_.Close();
     audio_packet_queue_.Close();
+    video_frame_queue_.Close();
 
     // 提前释放与 SDL 相关的资源，再调用 SDL_Quit
     texture_.reset();
@@ -462,12 +463,10 @@ int Player::DecodeVideoFrame() {
     UniqueAVFrame frame{av_frame_alloc()};
     auto frame_rate = video_stream_->avg_frame_rate;  // 帧率
     while (!stop_.load()) {
-        auto packet = video_packet_queue_.TryPop();
-        // TODO: 为什么视频就等待而音频直接return了
+        auto packet = video_packet_queue_.Pop();  // 改成阻塞式
         if (!packet) {
-            LOG_DEBUG("没有获取到视频包, 等待 10 ms...");
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            continue;
+            LOG_ERROR("没有获取到视频包");
+            return -1;
         }
 
         int ret = avcodec_send_packet(video_codec_ctx_.get(), packet->get());
@@ -504,6 +503,11 @@ int Player::DecodeVideoFrame() {
                                  : 0);
             // 写入视频帧环形队列 (阻塞)
             auto decoded_frame = video_frame_queue_.PeekWritable();
+            if (!decoded_frame) {
+                // 如果返回 nullptr，说明队列已关闭，线程应立即退出
+                LOG_INFO("视频帧环形队列已关闭, 解码线程退出!");
+                return 0;
+            }
             decoded_frame->pts_ = pts;
             decoded_frame->duration_ = duration;
             decoded_frame->sar_ = frame->sample_aspect_ratio;
