@@ -54,7 +54,9 @@ public:
     double GetVideoClock() const;
     void SetVideoClock(double pts);
     double SynchronizeVideo(const AVFrame* frame, double pts);
-    void CalculateDisplayRect(SDL_Rect* rect, int pic_width, int pic_height, AVRational pic_sar);
+    void CalculateDisplayRect(SDL_Rect* rect, int window_x, int window_y, int window_width,
+                              int window_height, int picture_width, int picture_height,
+                              AVRational picture_sar);
 
     // =============== 时钟同步 ===============
     double GetMasterClock() const;
@@ -84,6 +86,8 @@ private:
     UniqueSDLWindow window_;
     UniqueSDLRenderer renderer_;
     UniqueSDLTexture texture_;
+    int window_x_{0};
+    int window_y_{0};
     int window_width_{kDefaultWidth};
     int window_height_{kDefaultHeight};
 

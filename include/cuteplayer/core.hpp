@@ -185,6 +185,9 @@ public:
     // 获取当前可读 Frame 指针 (阻塞)
     DecodedFrame* PeekReadable();
 
+    // 获取当前可读 Frame 指针 (非阻塞)
+    std::optional<DecodedFrame*> TryPeekReadable();
+
     // 获取上一帧
     DecodedFrame* PeekLastReadable();
 

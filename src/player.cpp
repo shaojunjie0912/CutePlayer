@@ -6,6 +6,7 @@
 // NOTE: 一个 AVPacket 可能对应一个或多个 AVFrame
 // 但也可能多个 AVPacket 才可以解码出一个 AVFrame (比如: 帧间依赖)
 // TODO: 仔细思考每个分支的返回值
+// TODO: av_packet_unref 的使用!!
 
 namespace cuteplayer {
 
@@ -191,6 +192,10 @@ void Player::OpenStreamComponent(int stream_index) {
     }
 }
 
+void Player::ScheduleNextVideoRefresh(int delay_ms) {
+    SDL_AddTimer(delay_ms, VideoRefreshTimerWrapper, this);
+}
+
 uint32_t Player::VideoRefreshTimerWrapper(uint32_t /*interval*/, void* opaque) {
     SDL_Event event;
     event.type = kFFRefreshEvent;
@@ -199,10 +204,7 @@ uint32_t Player::VideoRefreshTimerWrapper(uint32_t /*interval*/, void* opaque) {
     return 0;
 }
 
-void Player::ScheduleNextVideoRefresh(int delay_ms) {
-    SDL_AddTimer(delay_ms, VideoRefreshTimerWrapper, this);
-}
-
+// 核心视频时钟->音频时钟同步逻辑
 void Player::VideoRefreshHandler() {
     if (stop_.load()) {
         return;
@@ -212,56 +214,68 @@ void Player::VideoRefreshHandler() {
         return;
     }
 
+    // 阻塞获取当前可读 DecodedFrame 指针
     auto decoded_frame = video_frame_queue_.PeekReadable();
-    if (!decoded_frame) {
-        ScheduleNextVideoRefresh(1);  // 还没有帧, 快速重试
+    if (!decoded_frame) {  // 一般不会没有吧
+        LOG_ERROR("VideoRefreshHandler: 没有可读的解码视频帧!");
         return;
     }
-
-    const DecodedFrame* current_frame = decoded_frame;
-    double pts = current_frame->pts_;
-    double delay = pts - frame_last_pts_;
-    if (delay <= 0 || delay >= 1.0) {
+    double pts = decoded_frame->pts_;
+    double delay = frame_last_pts_ == 0 ? 0 : pts - frame_last_pts_;  // 计算两帧之间的理论间隔
+    if (delay <= 0 || delay >= 1.0) {  // 如果间隔小于0或大于1秒, 则使用上一帧的间隔
         delay = frame_last_delay_;
     }
     frame_last_delay_ = delay;
     frame_last_pts_ = pts;
 
-    double ref_clock = GetMasterClock();
-    double diff = pts - ref_clock;
-
-    double sync_threshold = std::max(delay, kMinAvSyncThreshold);
-    if (std::abs(diff) < kAvNoSyncThreshold) {
-        if (diff <= -sync_threshold) {  // video is behind
-            delay = std::max(0.0, delay + diff);
-        } else if (diff >= sync_threshold) {  // video is ahead
-            delay = delay + diff;
+    // ======================== 核心同步逻辑 =======================
+    double ref_clock = GetMasterClock();  // 获取参考时钟
+    double diff = pts - ref_clock;        // 计算当前视频帧的 pts 与参考时钟的差值
+    // 动态调整同步阈值 (阈值至少是MIN，但不超过MAX，并与帧延迟相关联，是ffplay的经典做法)
+    double sync_threshold = std::max(kMinAvSyncThreshold, std::min(kMaxAvSyncThreshold, delay));
+    if (!isnan(diff) && std::abs(diff) < kAvNoSyncThreshold) {
+        if (diff <= -sync_threshold) {
+            // NOTE: 丢帧逻辑
+            // 视频严重落后(diff为一个较大的负数)，需要丢帧来追赶。
+            // 我们简单地移动读指针，相当于丢弃当前帧，然后重新调度以处理下一帧。
+            video_frame_queue_.MoveReadIndex();  // 里面有 frame unref
+            // 立即重新调度，尽快处理下一帧
+            ScheduleNextVideoRefresh(0);
+            return;  // 注意：丢帧后直接返回，不进行本轮的渲染
+        }
+        if (diff >= sync_threshold) {
+            // 视频超前，需要增加延迟等待音频。
+            // 将理论延迟加倍是一种简单有效的策略。
+            delay = delay * 2;
         }
     }
 
-    frame_timer_ += delay;
+    // 计算并安排下一次刷新
+    frame_timer_ += delay;  // TODO: 他的初始化在哪? 这个定时器有啥作用?
     double actual_delay = frame_timer_ - (static_cast<double>(av_gettime()) / 1000000.0);
+    // 确保延迟有一个最小值，防止CPU空转
     if (actual_delay < 0.010) {
         actual_delay = 0.010;
     }
-
+    // 安排下一次定时器回调
     ScheduleNextVideoRefresh(static_cast<int>(actual_delay * 1000 + 0.5));
-
     RenderVideoFrame();
-    video_frame_queue_.MoveReadIndex();
 }
 
 void Player::RenderVideoFrame() {
-    auto frame_opt = video_frame_queue_.PeekReadable();
-    if (!frame_opt) return;
+    auto decoded_frame = video_frame_queue_.PeekReadable();
+    if (!decoded_frame) {  // 一般不会没有吧
+        LOG_ERROR("RenderVideoFrame: 没有可读的视频解码帧!");
+        return;
+    }
 
-    const AVFrame* frame = frame_opt->frame_.get();
+    const AVFrame* frame = decoded_frame->frame_.get();
 
     if (!texture_) {
         texture_.reset(SDL_CreateTexture(renderer_.get(), SDL_PIXELFORMAT_IYUV,
                                          SDL_TEXTUREACCESS_STREAMING, frame->width, frame->height));
         if (!texture_) {
-            LOG_ERROR("Cannot create SDL texture: {}", SDL_GetError());
+            LOG_ERROR("RenderVideoFrame: 创建 SDL 纹理失败: {}", SDL_GetError());
             return;
         }
     }
@@ -270,11 +284,15 @@ void Player::RenderVideoFrame() {
                          frame->data[1], frame->linesize[1], frame->data[2], frame->linesize[2]);
 
     SDL_Rect rect;
-    CalculateDisplayRect(&rect, frame->width, frame->height, frame->sample_aspect_ratio);
+    // 计算显示区域
+    CalculateDisplayRect(&rect, window_x_, window_y_, window_width_, window_height_, frame->width,
+                         frame->height, frame->sample_aspect_ratio);
 
+    // 渲染视频帧
     SDL_RenderClear(renderer_.get());
     SDL_RenderCopy(renderer_.get(), texture_.get(), nullptr, &rect);
     SDL_RenderPresent(renderer_.get());
+    video_frame_queue_.MoveReadIndex();  // 释放视频帧
 }
 
 // 往 VideoPacketQueue 和 AudioPacketQueue 中添加数据包
@@ -329,15 +347,18 @@ int Player::DecodeAudioFrame() {
 
         // avcodec_send_packet: 异步发送一个 AVPacket 到解码器(解码器内部维护一个 AVPacket 队列)
         int ret = avcodec_send_packet(audio_codec_ctx_.get(), packet->get());
-
-        if (ret == 0) {  // 发送成功
-            av_packet_unref(packet->get());
-        } else if (ret == AVERROR(EAGAIN)) {  // 解码器内部缓冲区已满, 先取走一些 AVFrame
-            LOG_DEBUG("音频 avcodec_send_packet 需要 receive, ret: EAGAIN");
-        } else {  // EOF 或致命错误
-            LOG_ERROR("音频 avcodec_send_packet EOF/发生错误: {}", av_err2str(ret));
-            av_packet_unref(packet->get());
-            return ret;
+        // TODO: 此处 ret==0 表示成功, 是否需要 unref? 因为 packet 是一个 RAII 类
+        // if (ret == 0) {
+        //     av_packet_unref(packet->get());
+        // }
+        if (ret < 0) {
+            if (ret == AVERROR(EAGAIN)) {  // 解码器内部缓冲区已满, 先取走一些 AVFrame
+                LOG_DEBUG("音频 avcodec_send_packet 需要 receive, ret: EAGAIN");
+            } else {  // EOF 或致命错误
+                LOG_ERROR("音频 avcodec_send_packet EOF/发生错误: {}", av_err2str(ret));
+                av_packet_unref(packet->get());
+                return ret;
+            }
         }
 
         // 循环调用 avcodec_receive_frame 以获取所有可能产生的帧 (0,1,...)
@@ -402,11 +423,11 @@ void Player::AudioCallbackWrapper(void* userdata, uint8_t* stream, int len) {
     static_cast<Player*>(userdata)->AudioCallback(stream, len);
 }
 
-// TODO: 存
+// TODO:
 // stream: 音频数据流(注意: 音频设备从该流中获取数据)
 // len: 需要填充的数据长度
 void Player::AudioCallback(uint8_t* stream, int len) {
-    SDL_memset(stream, 0, len);
+    std::memset(stream, 0, len);
 
     // 缓冲区没有数据了
     while (len > 0) {
@@ -439,6 +460,7 @@ void Player::StartThreads() {
 
 int Player::DecodeVideoFrame() {
     UniqueAVFrame frame{av_frame_alloc()};
+    auto frame_rate = video_stream_->avg_frame_rate;  // 帧率
     while (!stop_.load()) {
         auto packet = video_packet_queue_.TryPop();
         // TODO: 为什么视频就等待而音频直接return了
@@ -476,15 +498,21 @@ int Player::DecodeVideoFrame() {
             double pts =
                 (frame->pts == AV_NOPTS_VALUE) ? 0 : frame->pts * av_q2d(video_stream_->time_base);
             pts = SynchronizeVideo(frame.get(), pts);
-
-            // TODO: 以下代码可能不正确, 内存泄露/不必要的拷贝
-            auto writable_frame_pos = video_frame_queue_.PeekWritable();
-
-            // DecodedFrame* df = writable_frame_pos;
-            // av_frame_move_ref(df->frame_.get(), frame.get());
-            // df->pts_ = pts;
-            // video_frame_queue_.MoveWriteIndex();
-            av_frame_unref(frame.get());
+            // 计算当前帧的时长
+            auto duration = (frame_rate.num && frame_rate.den
+                                 ? av_q2d(AVRational{frame_rate.den, frame_rate.num})
+                                 : 0);
+            // 写入视频帧环形队列 (阻塞)
+            auto decoded_frame = video_frame_queue_.PeekWritable();
+            decoded_frame->pts_ = pts;
+            decoded_frame->duration_ = duration;
+            decoded_frame->sar_ = frame->sample_aspect_ratio;
+            decoded_frame->width_ = frame->width;
+            decoded_frame->height_ = frame->height;
+            decoded_frame->format_ = frame->format;
+            decoded_frame->pos_ = AV_NOPTS_VALUE;  // TODO: 这里为什么设置为 AV_NOPTS_VALUE?
+            av_frame_move_ref(decoded_frame->frame_.get(), frame.get());  // 移动
+            video_frame_queue_.MoveWriteIndex();
         }
     }
     return 0;
@@ -498,6 +526,7 @@ void Player::VideoDecodeLoop() {
     LOG_INFO("视频解码线程结束!");
 }
 
+// 视频时钟计算!
 double Player::SynchronizeVideo(const AVFrame* frame, double pts) {
     if (pts != 0) {
         // 如果解码出的帧带有有效的 pts, 则更新视频时钟
@@ -535,34 +564,44 @@ double Player::GetMasterClock() const {
 
 double Player::GetVideoClock() const { return video_clock_; }
 
-void Player::CalculateDisplayRect(SDL_Rect* rect, int pic_width, int pic_height,
-                                  AVRational pic_sar) {
-    float aspect_ratio;
-    if (pic_sar.num == 0 || pic_sar.den == 0) {
-        aspect_ratio = 0;
-    } else {
-        aspect_ratio = av_q2d(pic_sar);
+void Player::CalculateDisplayRect(SDL_Rect* rect, int window_x, int window_y, int window_width,
+                                  int window_height, int picture_width, int picture_height,
+                                  AVRational picture_sar) {
+    // NOTE: picture_sar: sample aspect ratio 像素宽高比 SAR
+    // 不同于 DAR(display aspect ratio) 显示宽高比
+    AVRational aspect_ratio = picture_sar;
+
+    // 如果 pic_sar 为零或负值（即无效值），则将 aspect_ratio 设置为 1:1，表示无畸变的方形像素。
+    if (av_cmp_q(aspect_ratio, av_make_q(0, 1)) <= 0) {
+        aspect_ratio = av_make_q(1, 1);
     }
 
-    if (aspect_ratio <= 0.0) {
-        aspect_ratio = 1.0;
+    // 计算显示的宽高比, 根据图像原始尺寸和像素宽高比计算
+    // NOTE: 显示宽高比(DAR) = 像素宽高比(SAR) * 图像宽高比
+    aspect_ratio = av_mul_q(aspect_ratio, av_make_q(picture_width, picture_height));
+
+    // 计算显示的宽高
+    // 首先尝试让视频的高度填满窗口，并计算出此时应有的宽度
+    int64_t height = window_height;
+    int64_t width = av_rescale(height, aspect_ratio.num, aspect_ratio.den) & ~1;
+    // 如果越界了，就说明视频的宽度才是限制因素。
+    // 于是反过来让视频的宽度填满窗口，并重新计算出此时应有的高度。
+    if (width > window_width) {
+        width = window_width;
+        height = av_rescale(width, aspect_ratio.den, aspect_ratio.num) & ~1;
     }
-    aspect_ratio *= static_cast<float>(pic_width) / static_cast<float>(pic_height);
 
-    int win_w, win_h;
-    SDL_GetWindowSize(window_.get(), &win_w, &win_h);
+    // 计算显示的位置
+    // 窗口尺寸减去视频尺寸，得到总的黑边大小，再除以2，
+    // 就得到了让其居中的左上角 (x, y) 坐标。
+    int64_t x = (window_width - width) / 2;
+    int64_t y = (window_height - height) / 2;
 
-    int h = win_h;
-    int w = static_cast<int>(round(h * aspect_ratio));
-    if (w > win_w) {
-        w = win_w;
-        h = static_cast<int>(round(w / aspect_ratio));
-    }
+    rect->x = static_cast<int>(window_x + x);
+    rect->y = static_cast<int>(window_y + y);
 
-    rect->x = (win_w - w) / 2;
-    rect->y = (win_h - h) / 2;
-    rect->w = w;
-    rect->h = h;
+    rect->w = std::max(static_cast<int>(width), 1);
+    rect->h = std::max(static_cast<int>(height), 1);
 }
 
 }  // namespace cuteplayer

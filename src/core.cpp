@@ -104,6 +104,14 @@ DecodedFrame* FrameQueue::PeekReadable() {
     return &decoded_frames_[rindex_];
 }
 
+std::optional<DecodedFrame*> FrameQueue::TryPeekReadable() {
+    std::unique_lock lk{mtx_};
+    if (size_ == 0) {
+        return std::nullopt;
+    }
+    return &decoded_frames_[rindex_];
+}
+
 DecodedFrame* FrameQueue::PeekLastReadable() {
     std::unique_lock lk{mtx_};
     cv_can_read_.wait(lk, [this] { return size_ > 1; });
@@ -122,7 +130,7 @@ void FrameQueue::MoveReadIndex() {
         rindex_shown_ = 1;  // 标记为: 已显示但保留
         return;
     }
-    av_frame_unref(decoded_frames_[rindex_].frame_.get());
+    av_frame_unref(decoded_frames_[rindex_].frame_.get());  // NOTE: 这里会减少引用计数
     if (++rindex_ == max_size_) {
         rindex_ = 0;
     }
