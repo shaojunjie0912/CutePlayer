@@ -2,113 +2,15 @@
 
 #include <atomic>
 #include <cstdint>
-#include <cuteplayer/main.hpp>
-#include <mutex>
-#include <optional>
-#include <queue>
+#include <cuteplayer/core.hpp>
+#include <cuteplayer/logger.hpp>
 #include <string>
+#include <thread>
 #include <vector>
 
 // NOTE: 选择音频时钟作为主时钟:
 
 namespace cuteplayer {
-
-// ================== PacketQueue Class ==================
-class PacketQueue {
-public:
-    explicit PacketQueue(std::size_t data_size_limit);
-
-    ~PacketQueue() = default;
-
-    // 禁止拷贝
-    PacketQueue(const PacketQueue&) = delete;
-    // 禁止移动
-    PacketQueue(PacketQueue&&) = delete;
-
-public:
-    // 阻塞 Push
-    bool Push(UniqueAVPacket packet);
-
-    // 阻塞 Pop
-    std::optional<UniqueAVPacket> Pop();
-
-    // 非阻塞 Pop
-    std::optional<UniqueAVPacket> TryPop();
-
-public:
-    // 清空队列
-    void Clear();
-
-    // 关闭队列
-    void Close();
-
-    // 获取当前总字节大小
-    std::size_t GetTotalDataSize() const;
-
-private:
-    std::queue<UniqueAVPacket> queue_;  // 队列
-    std::size_t curr_data_bytes_{0};    // 当前总字节大小
-
-    // (TODO: 「背压」机制) 防止生产者过快生产数据
-    std::size_t max_data_bytes_;  // 基于字节大小的限制
-
-    mutable std::mutex mtx_;
-    std::condition_variable cv_can_push_;
-    std::condition_variable cv_can_pop_;
-
-    bool closed_{false};  // 队列是否已关闭
-};
-
-// ================== Decoded Frame Wrapper ==================
-struct DecodedFrame {
-    UniqueAVFrame frame;
-    double pts{};       // 帧的显示时间戳
-    double duration{};  // 帧的估计持续时间
-    int64_t pos{};      // 帧在输入文件中的字节位置
-    int width{};
-    int height{};
-    AVRational sar{};
-};
-
-// ================== FrameQueue Class ==================
-class FrameQueue {
-public:
-    explicit FrameQueue(std::size_t max_size, bool keep_last_frame);
-
-    ~FrameQueue() = default;
-
-    FrameQueue(const FrameQueue&) = delete;  // 禁止拷贝
-
-    FrameQueue(FrameQueue&&) = delete;  // 禁止移动
-
-public:
-    // 获取当前可写 Frame 指针 (阻塞)
-    DecodedFrame* PeekWritable();
-
-    // 获取当前可读 Frame 指针 (阻塞)
-    DecodedFrame* PeekReadable();
-
-    // 获取当前可读 Frame 指针 (不阻塞)
-    DecodedFrame* Peek();
-
-    void Pop();
-
-    void Push();
-
-    std::size_t GetSize() const;
-
-private:
-    size_t rindex_{0};                          // 读取索引
-    size_t windex_{0};                          // 写入索引
-    size_t size_{0};                            // 当前帧数
-    size_t max_size_{0};                        // 最大帧数
-    size_t rindex_shown_{0};                    // 已显示的帧数
-    std::vector<DecodedFrame> decoded_frames_;  // 帧环形缓冲区 (数组)
-    std::condition_variable cv_can_push_;
-    std::condition_variable cv_can_pop_;
-    mutable std::mutex mtx_;
-    bool keep_last_frame_{false};  // 是否保留最后一帧
-};
 
 // ================== Player Class ==================
 class Player {
@@ -121,6 +23,7 @@ public:
     Player(const Player&) = delete;
     Player& operator=(const Player&) = delete;
 
+public:
     void Run();
 
 public:
@@ -132,15 +35,18 @@ public:
     void StartThreads();
 
     // =============== 线程循环 ===============
+    // 读取线程
     void ReadLoop();
+    // 视频解码线程
     void VideoDecodeLoop();
 
     // =============== 音频处理 ===============
+    int DecodeAudioFrame();
     static void AudioCallbackWrapper(void* userdata, uint8_t* stream, int len);
     void AudioCallback(uint8_t* stream, int len);
-    int DecodeAudioFrame();
 
     // =============== 视频处理 ===============
+    int DecodeVideoFrame();
     static uint32_t VideoRefreshTimerWrapper(uint32_t interval, void* opaque);
     void ScheduleNextVideoRefresh(int delay_ms);
     void VideoRefreshHandler();
@@ -195,7 +101,7 @@ private:
     double frame_last_pts_{0.0};    // 上一帧显示时间戳
     double frame_last_delay_{0.0};  // TODO: 上一帧显示延迟
     //
-    std::atomic_bool running_;
+    std::atomic_bool stop_{false};
 };
 
 }  // namespace cuteplayer

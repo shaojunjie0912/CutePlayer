@@ -1,7 +1,8 @@
-#include <cuteplayer/main.hpp>
 #include <cuteplayer/player.hpp>
 #include <stdexcept>
 #include <string>
+
+// TODO: Player 的退出标志位stop_是否滥用错用漏用?
 
 int main(int argc, char* argv[]) {
     init_logger();
@@ -12,11 +13,10 @@ int main(int argc, char* argv[]) {
     }
 
     try {
-        cuteplayer::Player player(argv[1]);
+        cuteplayer::Player player{argv[1]};
         player.Run();
     } catch (const std::runtime_error& e) {
-        LOG_ERROR("A critical error occurred: {}", e.what());
-        // 清理在 player 构造失败前已初始化的资源
+        LOG_ERROR("播放器运行失败! 错误信息: {}", e.what());
         SDL_Quit();
         return -1;
     }

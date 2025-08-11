@@ -1,4 +1,4 @@
-#include <cuteplayer/main.hpp>
+#include <cuteplayer/logger.hpp>
 
 void init_logger() {
     auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
@@ -7,5 +7,5 @@ void init_logger() {
     logger->set_level(spdlog::level::info);
     spdlog::set_default_logger(logger);
     spdlog::flush_on(spdlog::level::info);
-    LOG_INFO("Logger initialized");
+    LOG_INFO("Logger 启动!");
 }
