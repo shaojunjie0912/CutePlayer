@@ -167,7 +167,7 @@ struct DecodedFrame {
 // ================== FrameQueue Class ==================
 class FrameQueue {
 public:
-    explicit FrameQueue(int max_size, bool keep_last_frame = false);
+    explicit FrameQueue(int max_size);
 
     ~FrameQueue() = default;
 
@@ -185,9 +185,6 @@ public:
     // 获取当前可读 Frame 指针 (阻塞)
     DecodedFrame* PeekReadable();
 
-    // 获取当前可读 Frame 指针 (非阻塞)
-    std::optional<DecodedFrame*> TryPeekReadable();
-
     // 获取上一帧
     DecodedFrame* PeekLastReadable();
 
@@ -200,19 +197,17 @@ public:
     void Close();
 
 private:
-    size_t rindex_{0};        // 读取索引
-    size_t windex_{0};        // 写入索引
-    size_t size_{0};          // 当前帧数
-    size_t max_size_{0};      // 最大帧数
-    size_t rindex_shown_{0};  // keep_last_frame的实现，读的时候实际上读的是rindex + rindex_shown
+    size_t rindex_{0};    // 读取索引
+    size_t windex_{0};    // 写入索引
+    size_t size_{0};      // 当前帧数
+    size_t max_size_{0};  // 最大帧数
 
     // TODO: vector 中应该放 unique_ptr 还是原对象?
     std::vector<DecodedFrame> decoded_frames_;  // 解码帧环形队列
     std::condition_variable cv_can_write_;
     std::condition_variable cv_can_read_;
     mutable std::mutex mtx_;
-    bool keep_last_frame_;  // 播放后是否在队列中保留上一帧不销毁
-    bool closed_{false};    // 队列是否已关闭
+    bool closed_{false};  // 队列是否已关闭
 };
 
 }  // namespace cuteplayer

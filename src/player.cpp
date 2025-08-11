@@ -217,8 +217,15 @@ void Player::VideoRefreshHandler() {
 
     // 阻塞获取当前可读 DecodedFrame 指针
     auto decoded_frame = video_frame_queue_.PeekReadable();
-    if (!decoded_frame) {  // 一般不会没有吧
-        LOG_ERROR("VideoRefreshHandler: 没有可读的解码视频帧!");
+    if (!decoded_frame) {
+        // 当帧队列关闭且为空时 PeekReadable 会返回 nullptr,
+        // 这意味着所有帧都已渲染完毕，播放正式结束。
+        LOG_INFO("视频播放完毕, 发送退出事件。");
+        stop_.store(true);  // 设置停止标志
+        // 主动推送一个退出事件来优雅地终止主事件循环
+        SDL_Event event;
+        event.type = SDL_QUIT;
+        SDL_PushEvent(&event);
         return;
     }
     double pts = decoded_frame->pts_;
@@ -334,6 +341,8 @@ void Player::ReadLoop() {
         // 无论是不是需要的流, 都要 unref
         av_packet_unref(packet_template.get());  // packet 上次的内存块引用计数为0就自动释放
     }
+    video_packet_queue_.Close();
+    audio_packet_queue_.Close();
     LOG_INFO("读取线程结束");
 }
 
@@ -463,31 +472,31 @@ int Player::DecodeVideoFrame() {
     UniqueAVFrame frame{av_frame_alloc()};
     auto frame_rate = video_stream_->avg_frame_rate;  // 帧率
     while (!stop_.load()) {
-        auto packet = video_packet_queue_.Pop();  // 改成阻塞式
-        if (!packet) {
-            LOG_ERROR("没有获取到视频包");
-            return -1;
-        }
-
-        int ret = avcodec_send_packet(video_codec_ctx_.get(), packet->get());
-        if (ret == 0) {  // 发送成功
-            av_packet_unref(packet->get());
-        } else if (ret == AVERROR(EAGAIN)) {  // 解码器内部缓冲区已满, 先取走一些 AVFrame
-            LOG_DEBUG("视频 avcodec_send_packet 需要 receive, ret: EAGAIN");
-        } else {  // EOF 或致命错误
-            LOG_ERROR("视频 avcodec_send_packet EOF/发生错误: {}", av_err2str(ret));
-            av_packet_unref(packet->get());
-            return -1;
+        auto packet = video_packet_queue_.Pop();  // 阻塞式
+        if (packet) {                             // 成功获取到包
+            int ret = avcodec_send_packet(video_codec_ctx_.get(), packet->get());
+            if (ret < 0) {
+                LOG_ERROR("视频 avcodec_send_packet 发生错误: {}", av_err2str(ret));
+                // 即使发送失败，也尝试继续解码，可能只是需要先 receive
+            }
+        } else {  // 如果返回空指针, 说明队列已关闭, 这是来自 ReadLoop 的 EOF 信号
+            LOG_INFO("视频包队列已关闭, 发送 null packet 以冲刷解码器。");
+            avcodec_send_packet(video_codec_ctx_.get(), nullptr);
         }
 
         while (!stop_.load()) {
-            ret = avcodec_receive_frame(video_codec_ctx_.get(), frame.get());
+            int ret = avcodec_receive_frame(video_codec_ctx_.get(), frame.get());
             if (ret < 0) {
                 if (ret == AVERROR(EAGAIN)) {  // 需要更多 packet
                     break;
+                } else if (ret == AVERROR_EOF) {  // 解码器已完全冲刷, 所有帧已取出
+                    LOG_INFO("视频解码器冲刷完毕, 关闭视频帧队列!");
+                    video_frame_queue_.Close();  // 关闭帧队列, NOTE: 通知渲染逻辑
+                    return 0;                    // 成功退出解码线程
                 } else {
-                    LOG_ERROR("视频 avcodec_receive_frame EOF/发生错误: {}", av_err2str(ret));
-                    av_frame_unref(frame.get());
+                    LOG_ERROR("视频 avcodec_receive_frame 发生致命错误: {}", av_err2str(ret));
+                    video_frame_queue_.Close();  // 出错也要关闭, 防止渲染线程死锁
+                    // av_frame_unref(frame.get());
                     return -1;
                 }
             }
@@ -518,7 +527,16 @@ int Player::DecodeVideoFrame() {
             av_frame_move_ref(decoded_frame->frame_.get(), frame.get());  // 移动
             video_frame_queue_.MoveWriteIndex();
         }
+        if (!packet) {
+            // 如果已经发送了 null packet 并且内部循环因 EAGAIN 退出，
+            // 说明解码器已经没有更多帧可以输出了。
+            // 虽然没有收到 AVERROR_EOF，但也可以安全地认为解码过程已结束。
+            LOG_INFO("视频解码器已无更多帧输出，关闭视频帧队列。");
+            video_frame_queue_.Close();
+            return 0;  // 成功退出解码线程
+        }
     }
+    video_frame_queue_.Close();  // 确保任何退出路径都会关闭队列
     return 0;
 }
 

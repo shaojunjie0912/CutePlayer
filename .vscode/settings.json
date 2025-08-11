@@ -1,12 +1,12 @@
 {
     "xmake.debuggingTargetsArguments": {
         "cuteplayer": [
-            "${workspaceFolder}/data/zelda.mp4"
+            "${workspaceFolder}/data/zelda_10s.mp4"
         ]
     },
     "xmake.runningTargetsArguments": {
         "cuteplayer": [
-            "${workspaceFolder}/data/zelda.mp4"
+            "${workspaceFolder}/data/zelda_10s.mp4"
         ]
     }
 }
