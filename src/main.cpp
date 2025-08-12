@@ -2,10 +2,8 @@
 #include <stdexcept>
 #include <string>
 
-// TODO: Player 的退出标志位stop_是否滥用错用漏用?
-
 int main(int argc, char* argv[]) {
-    init_logger();
+    init_logger("logs/debug.log");
 
     if (argc < 2) {
         LOG_ERROR("Usage: {} <file_path>", argv[0]);

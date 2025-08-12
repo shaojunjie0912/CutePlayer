@@ -1,5 +1,5 @@
 set_project("CutePlayer")
-set_xmakever("2.9.9")
+set_xmakever("3.0.0")
 
 set_languages("c++20")
 
@@ -17,6 +17,7 @@ target("cuteplayer", function ()
     add_files("src/*.cpp")
     add_includedirs("include")
     add_packages("libsdl2", "ffmpeg", "spdlog")
+    set_rundir("$(projectdir)")
 end)
 
 

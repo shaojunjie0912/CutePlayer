@@ -1,11 +1,22 @@
 #include <cuteplayer/logger.hpp>
+#include <iostream>
+#include <memory>
+#include <string_view>
+#include <vector>
 
-void init_logger() {
-    auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
-    console_sink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%^%l%$] %v");
-    auto logger = std::make_shared<spdlog::logger>("CutePlayer", console_sink);
-    logger->set_level(spdlog::level::info);
-    spdlog::set_default_logger(logger);
-    spdlog::flush_on(spdlog::level::info);
-    LOG_INFO("Logger 启动!");
+void init_logger(std::string_view log_file_path) {
+    try {
+        std::vector<spdlog::sink_ptr> sinks;
+        sinks.push_back(std::make_shared<spdlog::sinks::stdout_color_sink_mt>());
+        sinks.push_back(
+            std::make_shared<spdlog::sinks::basic_file_sink_mt>(log_file_path.data(), true));
+        auto logger = std::make_shared<spdlog::logger>("CutePlayer", sinks.begin(), sinks.end());
+        spdlog::register_logger(logger);
+        spdlog::set_default_logger(logger);
+        logger->set_level(spdlog::level::debug);
+        logger->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%n] [%^%l%$] [thread %t] %v");
+        LOG_INFO("Logger 初始化成功!");
+    } catch (const spdlog::spdlog_ex& ex) {
+        std::cerr << "Logger 初始化失败: " << ex.what() << std::endl;
+    }
 }

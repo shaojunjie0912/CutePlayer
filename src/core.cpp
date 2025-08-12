@@ -9,6 +9,7 @@ namespace cuteplayer {
 
 bool PacketQueue::Push(UniqueAVPacket packet) {
     std::unique_lock lk{mtx_};
+    cv_can_push_.wait(lk, [this] { return closed_ || curr_data_bytes_ < max_data_bytes_; });
     if (closed_) {
         return false;
     }
@@ -29,6 +30,7 @@ std::optional<UniqueAVPacket> PacketQueue::Pop() {
     queue_.pop();
     curr_data_bytes_ -= packet->size;
     duration_ -= packet->duration;
+    cv_can_push_.notify_one();
     return packet;
 }
 
@@ -70,7 +72,7 @@ std::size_t PacketQueue::GetTotalDataSize() const {
 // =============================================================================
 
 FrameQueue::FrameQueue(int max_size)
-    : max_size_(std::min(16, max_size)),  // TODO: 与16比较取小的那个
+    : max_size_(std::min(16, max_size)),  // NOTE: 与16比较取小的那个
       decoded_frames_(max_size_) {
     for (auto& decoded_frame : decoded_frames_) {
         decoded_frame.frame_.reset(av_frame_alloc());
@@ -80,7 +82,6 @@ FrameQueue::FrameQueue(int max_size)
     }
 }
 
-// TODO: PeekWritable + MoveWriteIndex 是否应该合并?
 DecodedFrame* FrameQueue::PeekWritable() {
     std::unique_lock lk{mtx_};
     cv_can_write_.wait(lk, [this] { return closed_ || size_ < max_size_; });
@@ -99,7 +100,6 @@ void FrameQueue::MoveWriteIndex() {
     cv_can_read_.notify_one();
 }
 
-// TODO: PeekReadable + MoveReadIndex 是否应该合并?
 DecodedFrame* FrameQueue::PeekReadable() {
     std::unique_lock lk{mtx_};
     cv_can_read_.wait(lk, [this] { return closed_ || size_ > 0; });

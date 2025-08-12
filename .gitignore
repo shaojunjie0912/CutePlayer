@@ -1,5 +1,6 @@
 .cache/
 build/
 .xmake/
+logs/
 *.mp4
 compile_commands.json

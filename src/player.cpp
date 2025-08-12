@@ -2,11 +2,8 @@
 #include <cuteplayer/player.hpp>
 #include <stdexcept>
 
-// TODO: running 标志位的使用
-// NOTE: 一个 AVPacket 可能对应一个或多个 AVFrame
-// 但也可能多个 AVPacket 才可以解码出一个 AVFrame (比如: 帧间依赖)
-// TODO: 仔细思考每个分支的返回值
-// TODO: av_packet_unref 的使用!!
+// NOTE: 一个 AVPacket 可能对应一个或多个 AVFrame (音频)
+// 但也可能多个 AVPacket 才可以解码出一个 AVFrame (比如: 视频帧间依赖)
 
 namespace cuteplayer {
 
@@ -16,6 +13,8 @@ namespace cuteplayer {
 
 Player::Player(std::string file_path)
     : file_path_(std::move(file_path)),
+      video_packet_queue_(kMaxPacketQueueDataBytes),
+      audio_packet_queue_(kMaxPacketQueueDataBytes),
       video_frame_queue_(kMaxFrameQueueSize),  // 默认不保留上一帧
       audio_frame_(av_frame_alloc()) {
     InitSDL();
@@ -59,7 +58,7 @@ void Player::Run() {
         SDL_WaitEvent(&event);
         switch (event.type) {
             case SDL_QUIT:
-                stop_.store(true);  // TODO: 停止标志位如何让所有线程都收到?
+                stop_.store(true);
                 return;
             case kFFRefreshEvent:       // 我们自定义的事件类型
                 VideoRefreshHandler();  // 视频刷新
@@ -193,116 +192,6 @@ void Player::OpenStreamComponent(int stream_index) {
     }
 }
 
-void Player::ScheduleNextVideoRefresh(int delay_ms) {
-    SDL_AddTimer(delay_ms, VideoRefreshTimerWrapper, this);
-}
-
-uint32_t Player::VideoRefreshTimerWrapper(uint32_t /*interval*/, void* opaque) {
-    SDL_Event event;
-    event.type = kFFRefreshEvent;
-    event.user.data1 = opaque;
-    SDL_PushEvent(&event);
-    return 0;
-}
-
-// 核心视频时钟->音频时钟同步逻辑
-void Player::VideoRefreshHandler() {
-    if (stop_.load()) {
-        return;
-    }
-    if (!video_stream_) {               // 如果还没有视频流, 考虑等一会
-        ScheduleNextVideoRefresh(100);  // 重新推入事件, 等待视频流
-        return;
-    }
-
-    // 阻塞获取当前可读 DecodedFrame 指针
-    auto decoded_frame = video_frame_queue_.PeekReadable();
-    if (!decoded_frame) {
-        // 当帧队列关闭且为空时 PeekReadable 会返回 nullptr,
-        // 这意味着所有帧都已渲染完毕，播放正式结束。
-        LOG_INFO("视频播放完毕, 发送退出事件。");
-        stop_.store(true);  // 设置停止标志
-        // 主动推送一个退出事件来优雅地终止主事件循环
-        SDL_Event event;
-        event.type = SDL_QUIT;
-        SDL_PushEvent(&event);
-        return;
-    }
-    double pts = decoded_frame->pts_;
-    double delay = frame_last_pts_ == 0 ? 0 : pts - frame_last_pts_;  // 计算两帧之间的理论间隔
-    if (delay <= 0 || delay >= 1.0) {  // 如果间隔小于0或大于1秒, 则使用上一帧的间隔
-        delay = frame_last_delay_;
-    }
-    frame_last_delay_ = delay;
-    frame_last_pts_ = pts;
-
-    // ======================== 核心同步逻辑 =======================
-    double ref_clock = GetMasterClock();  // 获取参考时钟
-    double diff = pts - ref_clock;        // 计算当前视频帧的 pts 与参考时钟的差值
-    // 动态调整同步阈值 (阈值至少是MIN，但不超过MAX，并与帧延迟相关联，是ffplay的经典做法)
-    double sync_threshold = std::max(kMinAvSyncThreshold, std::min(kMaxAvSyncThreshold, delay));
-    if (!isnan(diff) && std::abs(diff) < kAvNoSyncThreshold) {
-        if (diff <= -sync_threshold) {
-            // NOTE: 丢帧逻辑
-            // 视频严重落后(diff为一个较大的负数)，需要丢帧来追赶。
-            // 我们简单地移动读指针，相当于丢弃当前帧，然后重新调度以处理下一帧。
-            video_frame_queue_.MoveReadIndex();  // 里面有 frame unref
-            // 立即重新调度，尽快处理下一帧
-            ScheduleNextVideoRefresh(0);
-            return;  // 注意：丢帧后直接返回，不进行本轮的渲染
-        }
-        if (diff >= sync_threshold) {
-            // 视频超前，需要增加延迟等待音频。
-            // 将理论延迟加倍是一种简单有效的策略。
-            delay = delay * 2;
-        }
-    }
-
-    // 计算并安排下一次刷新
-    frame_timer_ += delay;  // TODO: 他的初始化在哪? 这个定时器有啥作用?
-    double actual_delay = frame_timer_ - (static_cast<double>(av_gettime()) / 1000000.0);
-    // 确保延迟有一个最小值，防止CPU空转
-    if (actual_delay < 0.010) {
-        actual_delay = 0.010;
-    }
-    // 安排下一次定时器回调
-    ScheduleNextVideoRefresh(static_cast<int>(actual_delay * 1000 + 0.5));
-    RenderVideoFrame();
-}
-
-void Player::RenderVideoFrame() {
-    auto decoded_frame = video_frame_queue_.PeekReadable();
-    if (!decoded_frame) {  // 一般不会没有吧
-        LOG_ERROR("RenderVideoFrame: 没有可读的视频解码帧!");
-        return;
-    }
-
-    const AVFrame* frame = decoded_frame->frame_.get();
-
-    if (!texture_) {
-        texture_.reset(SDL_CreateTexture(renderer_.get(), SDL_PIXELFORMAT_IYUV,
-                                         SDL_TEXTUREACCESS_STREAMING, frame->width, frame->height));
-        if (!texture_) {
-            LOG_ERROR("RenderVideoFrame: 创建 SDL 纹理失败: {}", SDL_GetError());
-            return;
-        }
-    }
-
-    SDL_UpdateYUVTexture(texture_.get(), nullptr, frame->data[0], frame->linesize[0],
-                         frame->data[1], frame->linesize[1], frame->data[2], frame->linesize[2]);
-
-    SDL_Rect rect;
-    // 计算显示区域
-    CalculateDisplayRect(&rect, window_x_, window_y_, window_width_, window_height_, frame->width,
-                         frame->height, frame->sample_aspect_ratio);
-
-    // 渲染视频帧
-    SDL_RenderClear(renderer_.get());
-    SDL_RenderCopy(renderer_.get(), texture_.get(), nullptr, &rect);
-    SDL_RenderPresent(renderer_.get());
-    video_frame_queue_.MoveReadIndex();  // 释放视频帧
-}
-
 // 往 VideoPacketQueue 和 AudioPacketQueue 中添加数据包
 void Player::ReadLoop() {
     LOG_INFO("读取线程开始");
@@ -310,12 +199,6 @@ void Player::ReadLoop() {
     // AVPacket 结构体中有一个 AVBufferRef* 指针, 指向数据缓冲区
     UniqueAVPacket packet_template{av_packet_alloc()};  // 用于循环读取的“模板”
     while (!stop_.load()) {
-        // NOTE: 背压机制, 基于字节数限制音频包和视频包队列大小
-        if (video_packet_queue_.GetTotalDataSize() > kMaxPacketQueueDataBytes ||
-            audio_packet_queue_.GetTotalDataSize() > kMaxPacketQueueDataBytes) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            continue;
-        }
         // av_read_frame: 分配新的一个数据包的内存, 并使得 packet 中的数据指针指向它
         // NOTE: 大小可变!!!
         int ret = av_read_frame(format_ctx_.get(), packet_template.get());
@@ -325,6 +208,7 @@ void Player::ReadLoop() {
             } else {
                 LOG_ERROR("读取数据包失败: {}", av_err2str(ret));
             }
+            // NOTE: 不需要unref, 因为ret<0时 av_read_frame内部会做清理工作
             break;
         }
         if (packet_template->stream_index == video_stream_idx_ ||
@@ -337,22 +221,24 @@ void Player::ReadLoop() {
             } else {
                 audio_packet_queue_.Push(std::move(packet_to_queue));
             }
+        } else {
+            // 无论是不是需要的流, 都要 unref
+            av_packet_unref(packet_template.get());  // packet 上次的内存块引用计数为0就自动释放
         }
-        // 无论是不是需要的流, 都要 unref
-        av_packet_unref(packet_template.get());  // packet 上次的内存块引用计数为0就自动释放
     }
     video_packet_queue_.Close();
     audio_packet_queue_.Close();
     LOG_INFO("读取线程结束");
 }
 
-// 返回的是音频帧的数量
+// 返回的是解码音频数据字节数
 int Player::DecodeAudioFrame() {
     while (!stop_.load()) {
-        auto packet{audio_packet_queue_.TryPop()};  // NOTE: 目前引用计数为 1
+        // NOTE: 非阻塞, 不能阻塞 SDL 音频回调, 否则用户会听到清晰可闻的音频爆音/卡顿/断续
+        // 任何情况下, 音频回调函数都必须严格避免任何可能导致阻塞或长时间运行的操作
+        auto packet{audio_packet_queue_.TryPop()};
         if (!packet) {
-            // TODO: 音频包队列为空 应该返回 0 静音 还是 等待10ms后再重新取
-            return 0;
+            return 0;  // 静音
         }
 
         // avcodec_send_packet: 异步发送一个 AVPacket 到解码器(解码器内部维护一个 AVPacket 队列)
@@ -384,7 +270,7 @@ int Player::DecodeAudioFrame() {
                 }
             }
             // 正常情况
-            int frame_cnt{0};
+            int data_bytes{0};
             auto in = static_cast<uint8_t* const*>(audio_frame_.get()->extended_data);
             int in_count = audio_frame_.get()->nb_samples;
             // 256 是一个安全余量, 因为重采样过程中可能会有轻微的延迟和缓存,
@@ -401,8 +287,11 @@ int Player::DecodeAudioFrame() {
 
             // 重采样 -> 返回每个通道的样本数
             int nb_ch_samples = swr_convert(audio_swr_ctx_.get(), &out, out_count, in, in_count);
-            frame_cnt = nb_ch_samples * audio_frame_.get()->ch_layout.nb_channels *
-                        av_get_bytes_per_sample(AV_SAMPLE_FMT_S16);
+
+            // NOTE: 计算解码后的音频数据字节数
+            // 每个通道的样本数 * 通道数 * 每个样本的字节数(S16=2字节)
+            data_bytes = nb_ch_samples * audio_frame_.get()->ch_layout.nb_channels *
+                         av_get_bytes_per_sample(AV_SAMPLE_FMT_S16);
 
             // NOTE: 更新音频时钟!!!  = pts + 持续时长
             if (audio_frame_.get()->pts != AV_NOPTS_VALUE) {
@@ -419,7 +308,7 @@ int Player::DecodeAudioFrame() {
                 audio_clock_ = NAN;
             }
             av_frame_unref(audio_frame_.get());  // 清空 frame 的引用计数
-            return frame_cnt;
+            return data_bytes;
         }
     }
     return 0;
@@ -437,16 +326,15 @@ void Player::AudioCallbackWrapper(void* userdata, uint8_t* stream, int len) {
 // stream: 音频数据流(注意: 音频设备从该流中获取数据)
 // len: 需要填充的数据长度
 void Player::AudioCallback(uint8_t* stream, int len) {
-    std::memset(stream, 0, len);
+    std::memset(stream, 0, len);  // 安全措施: 静音填充
 
-    // 缓冲区没有数据了
+    // 还需要 len 字节的数据
     while (len > 0) {
         // 已经发送我们所有的数据，需要获取更多数据
-        // TODO: 这里的 audio_buf_size_ 跟 audio_buffer_.size() 是否不对应?
         if (audio_buf_index_ >= audio_buf_size_) {
             int decoded_size = DecodeAudioFrame();
             if (decoded_size <= 0) {
-                // Error or EOF, 填充静音
+                // Error/EOF
                 return;
             }
             audio_buf_size_ = decoded_size;
@@ -575,6 +463,116 @@ double Player::SynchronizeVideo(const AVFrame* frame, double pts) {
     // 得到下一帧的理论显示时间戳，并更新视频时钟。
     video_clock_ += frame_delay;
     return pts;
+}
+
+void Player::ScheduleNextVideoRefresh(int delay_ms) {
+    SDL_AddTimer(delay_ms, VideoRefreshTimerWrapper, this);
+}
+
+uint32_t Player::VideoRefreshTimerWrapper(uint32_t /*interval*/, void* opaque) {
+    SDL_Event event;
+    event.type = kFFRefreshEvent;
+    event.user.data1 = opaque;
+    SDL_PushEvent(&event);
+    return 0;
+}
+
+// 核心视频时钟->音频时钟同步逻辑
+void Player::VideoRefreshHandler() {
+    if (stop_.load()) {
+        return;
+    }
+    if (!video_stream_) {               // 如果还没有视频流, 考虑等一会
+        ScheduleNextVideoRefresh(100);  // 重新推入事件, 等待视频流
+        return;
+    }
+
+    // 阻塞获取当前可读 DecodedFrame 指针
+    auto decoded_frame = video_frame_queue_.PeekReadable();
+    if (!decoded_frame) {
+        // 当帧队列关闭且为空时 PeekReadable 会返回 nullptr,
+        // 这意味着所有帧都已渲染完毕，播放正式结束。
+        LOG_INFO("视频播放完毕, 发送退出事件");
+        stop_.store(true);  // 设置停止标志
+        // 主动推送一个退出事件来优雅地终止主事件循环
+        SDL_Event event;
+        event.type = SDL_QUIT;
+        SDL_PushEvent(&event);
+        return;
+    }
+    double pts = decoded_frame->pts_;
+    double delay = frame_last_pts_ == 0 ? 0 : pts - frame_last_pts_;  // 计算两帧之间的理论间隔
+    if (delay <= 0 || delay >= 1.0) {  // 如果间隔小于0或大于1秒, 则使用上一帧的间隔
+        delay = frame_last_delay_;
+    }
+    frame_last_delay_ = delay;
+    frame_last_pts_ = pts;
+
+    // ======================== 核心同步逻辑 =======================
+    double ref_clock = GetMasterClock();  // 获取参考时钟
+    double diff = pts - ref_clock;        // 计算当前视频帧的 pts 与参考时钟的差值
+    // 动态调整同步阈值 (阈值至少是MIN，但不超过MAX，并与帧延迟相关联，是ffplay的经典做法)
+    double sync_threshold = std::max(kMinAvSyncThreshold, std::min(kMaxAvSyncThreshold, delay));
+    if (!isnan(diff) && std::abs(diff) < kAvNoSyncThreshold) {
+        if (diff <= -sync_threshold) {
+            // NOTE: 丢帧逻辑
+            // 视频严重落后(diff为一个较大的负数)，需要丢帧来追赶。
+            // 我们简单地移动读指针，相当于丢弃当前帧，然后重新调度以处理下一帧。
+            video_frame_queue_.MoveReadIndex();  // 里面有 frame unref
+            // 立即重新调度，尽快处理下一帧
+            ScheduleNextVideoRefresh(0);
+            return;  // 注意：丢帧后直接返回，不进行本轮的渲染
+        }
+        if (diff >= sync_threshold) {
+            // 视频超前，需要增加延迟等待音频。
+            // 将理论延迟加倍是一种简单有效的策略。
+            delay = delay * 2;
+        }
+    }
+
+    // 计算并安排下一次刷新
+    frame_timer_ += delay;  // TODO: 他的初始化在哪? 这个定时器有啥作用?
+    double actual_delay = frame_timer_ - (static_cast<double>(av_gettime()) / 1000000.0);
+    // 确保延迟有一个最小值，防止CPU空转
+    if (actual_delay < 0.010) {
+        actual_delay = 0.010;
+    }
+    // 安排下一次定时器回调
+    ScheduleNextVideoRefresh(static_cast<int>(actual_delay * 1000 + 0.5));
+    RenderVideoFrame();
+}
+
+void Player::RenderVideoFrame() {
+    auto decoded_frame = video_frame_queue_.PeekReadable();
+    if (!decoded_frame) {  // 一般不会没有吧
+        LOG_ERROR("RenderVideoFrame: 没有可读的视频解码帧!");
+        return;
+    }
+
+    const AVFrame* frame = decoded_frame->frame_.get();
+
+    if (!texture_) {
+        texture_.reset(SDL_CreateTexture(renderer_.get(), SDL_PIXELFORMAT_IYUV,
+                                         SDL_TEXTUREACCESS_STREAMING, frame->width, frame->height));
+        if (!texture_) {
+            LOG_ERROR("RenderVideoFrame: 创建 SDL 纹理失败: {}", SDL_GetError());
+            return;
+        }
+    }
+
+    SDL_UpdateYUVTexture(texture_.get(), nullptr, frame->data[0], frame->linesize[0],
+                         frame->data[1], frame->linesize[1], frame->data[2], frame->linesize[2]);
+
+    SDL_Rect rect;
+    // 计算显示区域
+    CalculateDisplayRect(&rect, window_x_, window_y_, window_width_, window_height_, frame->width,
+                         frame->height, frame->sample_aspect_ratio);
+
+    // 渲染视频帧
+    SDL_RenderClear(renderer_.get());
+    SDL_RenderCopy(renderer_.get(), texture_.get(), nullptr, &rect);
+    SDL_RenderPresent(renderer_.get());
+    video_frame_queue_.MoveReadIndex();  // 释放视频帧
 }
 
 double Player::GetMasterClock() const {

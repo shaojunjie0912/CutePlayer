@@ -117,16 +117,16 @@ using UniqueSDLTexture = std::unique_ptr<SDL_Texture, SDLTextureDeleter>;
 // ================== PacketQueue Class ==================
 class PacketQueue {
 public:
-    PacketQueue() = default;
+    PacketQueue(std::size_t max_data_bytes) : max_data_bytes_(max_data_bytes) {}
     ~PacketQueue() = default;
     PacketQueue(const PacketQueue&) = delete;
     PacketQueue(PacketQueue&&) = delete;
 
 public:
-    // 普通 Push (没有阻塞了)
+    // Push (阻塞)
     bool Push(UniqueAVPacket packet);
 
-    // 阻塞 Pop
+    // Pop (阻塞)
     std::optional<UniqueAVPacket> Pop();
 
     // 非阻塞 Pop
@@ -145,23 +145,24 @@ public:
 private:
     std::queue<UniqueAVPacket> queue_;  // 队列
     std::size_t curr_data_bytes_{0};    // 当前总字节大小
+    std::size_t max_data_bytes_{0};     // 最大总字节大小
     int64_t duration_{0};               // 总时长
     mutable std::mutex mtx_;
-    std::condition_variable cv_can_pop_;
-    bool closed_{false};  // 队列是否已关闭
+    std::condition_variable cv_can_pop_;   // 能 pop 的条件变量
+    std::condition_variable cv_can_push_;  // 能 push 的条件变量
+    bool closed_{false};                   // 队列是否已关闭
 };
 
 // ================== Decoded Frame Wrapper ==================
 struct DecodedFrame {
     UniqueAVFrame frame_;  // 解码后的 AVFrame 指针 (unique_ptr)
     double pts_{};         // 帧的显示时间戳
-    // TODO: 以下字段需要使用!!
-    double duration_{};  // 帧的估计持续时间
-    int64_t pos_{};      // 帧在输入文件中的字节位置
-    int width_{};        // 帧的宽度
-    int height_{};       // 帧的高度
-    int format_{};       // 帧的像素格式
-    AVRational sar_{};   // 帧的宽高比
+    double duration_{};    // 帧的估计持续时间
+    int64_t pos_{};        // 帧在输入文件中的字节位置
+    int width_{};          // 帧的宽度
+    int height_{};         // 帧的高度
+    int format_{};         // 帧的像素格式
+    AVRational sar_{};     // 帧的宽高比
 };
 
 // ================== FrameQueue Class ==================
@@ -202,7 +203,6 @@ private:
     size_t size_{0};      // 当前帧数
     size_t max_size_{0};  // 最大帧数
 
-    // TODO: vector 中应该放 unique_ptr 还是原对象?
     std::vector<DecodedFrame> decoded_frames_;  // 解码帧环形队列
     std::condition_variable cv_can_write_;
     std::condition_variable cv_can_read_;
