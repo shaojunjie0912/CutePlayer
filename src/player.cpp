@@ -120,7 +120,7 @@ void Player::FindStreams() {
 
 void Player::OpenStreamComponent(int stream_index) {
     std::string stream_type = stream_index == video_stream_idx_ ? "视频" : "音频";
-    LOG_INFO("尝试打开<{}>流组件...", stream_type);
+    LOG_INFO("尝试打开{}流组件...", stream_type);
     AVStream* stream{format_ctx_->streams[stream_index]};
     AVCodecParameters* codec_params{stream->codecpar};
 
@@ -147,9 +147,11 @@ void Player::OpenStreamComponent(int stream_index) {
     }
 
     if (codec_context->codec_type == AVMEDIA_TYPE_VIDEO) {
-        LOG_INFO("视频流组件打开成功!");
+        LOG_INFO("视频流组件打开成功! ");
         video_stream_ = stream;
         video_codec_ctx_ = std::move(codec_context);
+        // NOTE: 在视频组件初始化时, 设置 frame_timer_ 为当前系统时间
+        // 相当于为视频时钟校准了一个零点时刻
         frame_timer_ = static_cast<double>(av_gettime()) / 1000000.0;
     } else if (codec_context->codec_type == AVMEDIA_TYPE_AUDIO) {
         LOG_INFO("音频流组件打开成功!");
@@ -161,7 +163,7 @@ void Player::OpenStreamComponent(int stream_index) {
         SDL_memset(&wanted_spec, 0, sizeof(wanted_spec));
 
         AVChannelLayout out_ch_layout;
-        av_channel_layout_default(&out_ch_layout, 2);  // TODO: 需要拷贝用户的 channel_layout 吗?
+        av_channel_layout_default(&out_ch_layout, 2);  // 强制统一为立体声(2声道)
 
         wanted_spec.freq = audio_codec_ctx_->sample_rate;
         wanted_spec.format = AUDIO_S16SYS;
@@ -243,16 +245,11 @@ int Player::DecodeAudioFrame() {
 
         // avcodec_send_packet: 异步发送一个 AVPacket 到解码器(解码器内部维护一个 AVPacket 队列)
         int ret = avcodec_send_packet(audio_codec_ctx_.get(), packet->get());
-        // TODO: 此处 ret==0 表示成功, 是否需要 unref? 因为 packet 是一个 RAII 类
-        // if (ret == 0) {
-        //     av_packet_unref(packet->get());
-        // }
         if (ret < 0) {
-            if (ret == AVERROR(EAGAIN)) {  // 解码器内部缓冲区已满, 先取走一些 AVFrame
-                LOG_DEBUG("音频 avcodec_send_packet 需要 receive, ret: EAGAIN");
-            } else {  // EOF 或致命错误
+            // 对于 EAGAIN，我们什么都不做，直接进入下面的 receive_frame 循环尝试取帧。
+            // 对于其他错误，记录日志并返回错误码。packet 会在函数返回时自动释放。
+            if (ret != AVERROR(EAGAIN)) {
                 LOG_ERROR("音频 avcodec_send_packet EOF/发生错误: {}", av_err2str(ret));
-                av_packet_unref(packet->get());
                 return ret;
             }
         }
@@ -322,7 +319,6 @@ void Player::AudioCallbackWrapper(void* userdata, uint8_t* stream, int len) {
     static_cast<Player*>(userdata)->AudioCallback(stream, len);
 }
 
-// TODO:
 // stream: 音频数据流(注意: 音频设备从该流中获取数据)
 // len: 需要填充的数据长度
 void Player::AudioCallback(uint8_t* stream, int len) {
@@ -331,22 +327,22 @@ void Player::AudioCallback(uint8_t* stream, int len) {
     // 还需要 len 字节的数据
     while (len > 0) {
         // 已经发送我们所有的数据，需要获取更多数据
-        if (audio_buf_index_ >= audio_buf_size_) {
+        if (audio_buffer_index_ >= audio_buffer_size_) {
             int decoded_size = DecodeAudioFrame();
             if (decoded_size <= 0) {
                 // Error/EOF
                 return;
             }
-            audio_buf_size_ = decoded_size;
-            audio_buf_index_ = 0;
+            audio_buffer_size_ = decoded_size;
+            audio_buffer_index_ = 0;
         }
 
-        int len_to_copy = std::min(len, static_cast<int>(audio_buf_size_ - audio_buf_index_));
-        std::memcpy(stream, audio_buffer_.data() + audio_buf_index_, len_to_copy);
+        int len_to_copy = std::min(len, static_cast<int>(audio_buffer_size_ - audio_buffer_index_));
+        std::memcpy(stream, audio_buffer_.data() + audio_buffer_index_, len_to_copy);
 
         len -= len_to_copy;
         stream += len_to_copy;
-        audio_buf_index_ += len_to_copy;
+        audio_buffer_index_ += len_to_copy;
     }
 }
 
@@ -384,20 +380,19 @@ int Player::DecodeVideoFrame() {
                 } else {
                     LOG_ERROR("视频 avcodec_receive_frame 发生致命错误: {}", av_err2str(ret));
                     video_frame_queue_.Close();  // 出错也要关闭, 防止渲染线程死锁
-                    // av_frame_unref(frame.get());
                     return -1;
                 }
             }
 
-            // ================== 音视频同步 ==================
+            // ================== 更新视频时钟 ==================
             // (尝试)获取解码后的帧的 pts
             double pts =
                 (frame->pts == AV_NOPTS_VALUE) ? 0 : frame->pts * av_q2d(video_stream_->time_base);
             pts = SynchronizeVideo(frame.get(), pts);
             // 计算当前帧的时长
-            auto duration = (frame_rate.num && frame_rate.den
-                                 ? av_q2d(AVRational{frame_rate.den, frame_rate.num})
-                                 : 0);
+            auto delay = (frame_rate.num && frame_rate.den
+                              ? av_q2d(AVRational{frame_rate.den, frame_rate.num})
+                              : 0);
             // 写入视频帧环形队列 (阻塞)
             auto decoded_frame = video_frame_queue_.PeekWritable();
             if (!decoded_frame) {
@@ -406,12 +401,12 @@ int Player::DecodeVideoFrame() {
                 return 0;
             }
             decoded_frame->pts_ = pts;
-            decoded_frame->duration_ = duration;
+            decoded_frame->duration_ = delay;
             decoded_frame->sar_ = frame->sample_aspect_ratio;
             decoded_frame->width_ = frame->width;
             decoded_frame->height_ = frame->height;
             decoded_frame->format_ = frame->format;
-            decoded_frame->pos_ = AV_NOPTS_VALUE;  // TODO: 这里为什么设置为 AV_NOPTS_VALUE?
+            decoded_frame->pos_ = AV_NOPTS_VALUE;                         // TODO: seek 快进快退
             av_frame_move_ref(decoded_frame->frame_.get(), frame.get());  // 移动
             video_frame_queue_.MoveWriteIndex();
         }
@@ -436,7 +431,6 @@ void Player::VideoDecodeLoop() {
     LOG_INFO("视频解码线程结束!");
 }
 
-// 视频时钟计算!
 double Player::SynchronizeVideo(const AVFrame* frame, double pts) {
     if (pts != 0) {
         // 如果解码出的帧带有有效的 pts, 则更新视频时钟
@@ -445,24 +439,24 @@ double Player::SynchronizeVideo(const AVFrame* frame, double pts) {
         // 如果解码出的帧没有 pts, 就沿用上一帧的 video_clock_
         pts = video_clock_;
     }
-    double duration{.0};  // 帧持续时间 = 1/帧率
+    double delay{.0};  // 一帧的理论间隔时间 = 1/帧率
     auto frame_rate = video_stream_->avg_frame_rate;
     if (frame_rate.num != 0 && frame_rate.den != 0) {
-        duration = 1.0 / av_q2d(frame_rate);
+        delay = 1.0 / av_q2d(frame_rate);
     } else {
         // 如果无法从流中获取有效的帧率，则使用一个默认的、常见的帧延迟。
         // 例如 0.04 秒对应 25fps。这是一种降级策略。
-        duration = 0.04;
+        delay = 0.04;
     }
     // 某些编码格式或视频流会通过 repeat_pict 字段提示一帧需要被额外显示。
     // 这里根据这个字段来微调帧的持续时间，以更好地匹配视频的原始意图。
     // FFmpeg官方播放器ffplay中也使用了类似的逻辑。
-    double frame_delay = duration + frame->repeat_pict * (duration * 0.5);
+    double frame_delay = delay + frame->repeat_pict * (delay * 0.5);  // 一帧的实际间隔时间
 
     // 在当前视频时钟的基础上，加上一帧的持续时间，
     // 得到下一帧的理论显示时间戳，并更新视频时钟。
-    video_clock_ += frame_delay;
-    return pts;
+    video_clock_ += frame_delay;  // NOTE: 时钟: 下一帧的理论 pts
+    return pts;                   // 当前帧的 pts
 }
 
 void Player::ScheduleNextVideoRefresh(int delay_ms) {
@@ -492,36 +486,44 @@ void Player::VideoRefreshHandler() {
     if (!decoded_frame) {
         // 当帧队列关闭且为空时 PeekReadable 会返回 nullptr,
         // 这意味着所有帧都已渲染完毕，播放正式结束。
-        LOG_INFO("视频播放完毕, 发送退出事件");
-        stop_.store(true);  // 设置停止标志
-        // 主动推送一个退出事件来优雅地终止主事件循环
+        LOG_DEBUG("[Player::VideoRefreshHandler]: 所有视频帧已渲染完毕, 发送 SDL_QUIT 退出事件!");
+        stop_.store(true);
         SDL_Event event;
         event.type = SDL_QUIT;
         SDL_PushEvent(&event);
         return;
     }
-    double pts = decoded_frame->pts_;
-    double delay = frame_last_pts_ == 0 ? 0 : pts - frame_last_pts_;  // 计算两帧之间的理论间隔
+    // ======================== 音视频同步逻辑 =======================
+    double pts = decoded_frame->pts_;  // 当前帧的 pts
+    // 通过两帧显示时间戳(PTS)的差值，来计算一帧的理论持续时间。
+    // NOTE: 如果上一帧的 pts 为 0，则认为这是第一帧，间隔为 0。
+    double delay = last_frame_pts_ == 0 ? 0 : pts - last_frame_pts_;
+    // 容错机制: 由于视频编码或容器格式的问题, 有时PTS可能会不连续, 重复甚至回退
     if (delay <= 0 || delay >= 1.0) {  // 如果间隔小于0或大于1秒, 则使用上一帧的间隔
-        delay = frame_last_delay_;
+        delay = last_frame_delay_;
     }
-    frame_last_delay_ = delay;
-    frame_last_pts_ = pts;
+    last_frame_delay_ = delay;
+    last_frame_pts_ = pts;
 
-    // ======================== 核心同步逻辑 =======================
     double ref_clock = GetMasterClock();  // 获取参考时钟
-    double diff = pts - ref_clock;        // 计算当前视频帧的 pts 与参考时钟的差值
-    // 动态调整同步阈值 (阈值至少是MIN，但不超过MAX，并与帧延迟相关联，是ffplay的经典做法)
+
+    // 计算当前视频帧的 pts 与参考时钟的差值 (>0: 视频快了, <0: 视频慢了)
+    double diff = pts - ref_clock;
+
+    // 动态同步阈值 (阈值至少是MIN，但不超过MAX，并与帧延迟相关联，是ffplay的经典做法)
+    // 让低帧率视频有更宽松的同步范围，高帧率视频有更严格的范围，非常智能!
     double sync_threshold = std::max(kMinAvSyncThreshold, std::min(kMaxAvSyncThreshold, delay));
+
+    // ref_clock(音频时钟) 如果某一个音频帧没有有效pts, 会置 audio_clock_ 为 NAN
+    // 这里需要进行有效性检查
     if (!isnan(diff) && std::abs(diff) < kAvNoSyncThreshold) {
         if (diff <= -sync_threshold) {
             // NOTE: 丢帧逻辑
             // 视频严重落后(diff为一个较大的负数)，需要丢帧来追赶。
             // 我们简单地移动读指针，相当于丢弃当前帧，然后重新调度以处理下一帧。
             video_frame_queue_.MoveReadIndex();  // 里面有 frame unref
-            // 立即重新调度，尽快处理下一帧
-            ScheduleNextVideoRefresh(0);
-            return;  // 注意：丢帧后直接返回，不进行本轮的渲染
+            ScheduleNextVideoRefresh(0);         // 立即重新调度，尽快处理下一帧
+            return;                              // NOTE: 丢帧后直接返回，不进行本轮的渲染
         }
         if (diff >= sync_threshold) {
             // 视频超前，需要增加延迟等待音频。
@@ -531,14 +533,19 @@ void Player::VideoRefreshHandler() {
     }
 
     // 计算并安排下一次刷新
-    frame_timer_ += delay;  // TODO: 他的初始化在哪? 这个定时器有啥作用?
+    // 操作系统调度和其他程序的干扰等因素会导致定时器回调的实际执行时间与我们期望的时间有微小的偏差
+    // 如果只简单的 ScheduleNextVideoRefresh(delay), 会造成累计误差
+    // 作为“理想时刻表”，加上经过同步调整后的 delay，计算出下一帧最理想的显示时刻。
+    frame_timer_ += delay;
     double actual_delay = frame_timer_ - (static_cast<double>(av_gettime()) / 1000000.0);
-    // 确保延迟有一个最小值，防止CPU空转
+    // 设置一个最小延迟（10毫秒），可以防止在视频严重追赶时，定时器过于频繁地触发，
+    // 导致CPU占用率过高（忙等）。
     if (actual_delay < 0.010) {
         actual_delay = 0.010;
     }
     // 安排下一次定时器回调
     ScheduleNextVideoRefresh(static_cast<int>(actual_delay * 1000 + 0.5));
+    // 直接渲染当前帧
     RenderVideoFrame();
 }
 

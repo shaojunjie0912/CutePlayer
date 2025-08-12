@@ -41,25 +41,36 @@ public:
     void VideoDecodeLoop();
 
     // =============== 音频处理 ===============
+    // 解码音频帧 (包含更新音频时钟)
     int DecodeAudioFrame();
+    // SDL 音频回调
     static void AudioCallbackWrapper(void* userdata, uint8_t* stream, int len);
+    // 音频回调
     void AudioCallback(uint8_t* stream, int len);
 
     // =============== 视频处理 ===============
+    // 解码视频帧 (包含更新视频时钟)
     int DecodeVideoFrame();
+    // 视频刷新定时器回调
     static uint32_t VideoRefreshTimerWrapper(uint32_t interval, void* opaque);
+    // 调度下一帧视频刷新
     void ScheduleNextVideoRefresh(int delay_ms);
+    // 视频刷新处理 (包含音视频同步)
     void VideoRefreshHandler();
+    // 渲染视频帧
     void RenderVideoFrame();
-    double GetVideoClock() const;
-    void SetVideoClock(double pts);
-    double SynchronizeVideo(const AVFrame* frame, double pts);
+    // 计算视频显示区域
     void CalculateDisplayRect(SDL_Rect* rect, int window_x, int window_y, int window_width,
                               int window_height, int picture_width, int picture_height,
                               AVRational picture_sar);
 
     // =============== 时钟同步 ===============
+    // 获取主时钟
     double GetMasterClock() const;
+    // 获取视频时钟
+    double GetVideoClock() const;
+    // 更新视频时钟
+    double SynchronizeVideo(const AVFrame* frame, double pts);
 
 private:
     std::string file_path_;
@@ -95,15 +106,15 @@ private:
     UniqueSwrContext audio_swr_ctx_;     // 音频重采样上下文
     UniqueAVFrame audio_frame_;          // 音频重采样时使用的 AVFrame
     std::vector<uint8_t> audio_buffer_;  // 音频缓冲区
-    uint32_t audio_buf_size_{0};         // 音频缓冲区大小
-    uint32_t audio_buf_index_{0};        // 音频缓冲区索引
+    uint32_t audio_buffer_size_{0};      // 音频缓冲区大小
+    uint32_t audio_buffer_index_{0};     // 音频缓冲区索引
 
     // 音视频同步
     double audio_clock_{0.0};       // 音频时钟 (主时钟)
     double video_clock_{0.0};       // 视频时钟
-    double frame_timer_{0.0};       // 帧定时器
-    double frame_last_pts_{0.0};    // 上一帧显示时间戳
-    double frame_last_delay_{0.0};  // TODO: 上一帧显示延迟
+    double frame_timer_{0.0};       // 用于消除累计误差的高精度视频同步校正时钟
+    double last_frame_pts_{0.0};    // 上一帧显示时间戳
+    double last_frame_delay_{0.0};  // 上一帧显示延迟
     //
     std::atomic_bool stop_{false};
 };

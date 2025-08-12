@@ -60,6 +60,7 @@ void PacketQueue::Close() {
     }
     closed_ = true;
     cv_can_pop_.notify_all();
+    cv_can_push_.notify_all();
 }
 
 std::size_t PacketQueue::GetTotalDataSize() const {

@@ -22,14 +22,14 @@ namespace cuteplayer {
 
 // ================== Constants ==================
 
-constexpr int kDefaultWidth = 1920;
-constexpr int kDefaultHeight = 1080;
-constexpr int kMaxFrameQueueSize = 3;                       // 3 帧
+constexpr int kDefaultWidth = 1920;                         // SDL 窗口默认宽度
+constexpr int kDefaultHeight = 1080;                        // SDL 窗口默认高度
+constexpr int kMaxFrameQueueSize = 3;                       // 视频帧环形队列大小
 constexpr int kMaxPacketQueueDataBytes = 15 * 1024 * 1024;  // 15 MB
-constexpr int kSdlAudioBufferSize = 1024;
-constexpr double kMaxAvSyncThreshold = 0.1;
-constexpr double kMinAvSyncThreshold = 0.04;
-constexpr double kAvNoSyncThreshold = 10.0;
+constexpr int kSdlAudioBufferSize = 1024;                   // SDL 音频缓冲区每次填充的字节数
+constexpr double kMaxAvSyncThreshold = 0.100;               // 100ms
+constexpr double kMinAvSyncThreshold = 0.040;               // 40ms
+constexpr double kAvNoSyncThreshold = 10.0;                 // 10s (严重到没必要同步)
 constexpr int kFFRefreshEvent = SDL_USEREVENT + 1;
 
 // ================== FFmpeg Deleters ==================
@@ -158,7 +158,7 @@ struct DecodedFrame {
     UniqueAVFrame frame_;  // 解码后的 AVFrame 指针 (unique_ptr)
     double pts_{};         // 帧的显示时间戳
     double duration_{};    // 帧的估计持续时间
-    int64_t pos_{};        // 帧在输入文件中的字节位置
+    int64_t pos_{};        // 帧在输入文件或流中的字节位置 (NOTE: 精确跳转 (Seek) 快进快退)
     int width_{};          // 帧的宽度
     int height_{};         // 帧的高度
     int format_{};         // 帧的像素格式
