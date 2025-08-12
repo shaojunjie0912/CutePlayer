@@ -51,6 +51,7 @@ void PacketQueue::Clear() {
     std::queue<UniqueAVPacket>{}.swap(queue_);
     curr_data_bytes_ = 0;
     duration_ = 0;
+    cv_can_push_.notify_all();
 }
 
 void PacketQueue::Close() {
@@ -136,6 +137,18 @@ void FrameQueue::Close() {
     cv_can_write_.notify_all();
     // 唤醒可能在等待读取的线程 (消费者)
     cv_can_read_.notify_all();
+}
+
+void FrameQueue::Clear() {
+    std::unique_lock lk{mtx_};
+    // NOTE: 这里不需要清空环形队列, 因为是循环使用的, 只需要释放对应 AVFrame 的内存即可
+    for (auto& decoded_frame : decoded_frames_) {
+        av_frame_unref(decoded_frame.frame_.get());
+    }
+    size_ = 0;
+    windex_ = 0;
+    rindex_ = 0;
+    cv_can_write_.notify_all();
 }
 
 }  // namespace avplayer

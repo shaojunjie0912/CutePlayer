@@ -175,7 +175,11 @@ void Player::ReadLoop() {
     while (!stop_.load()) {
         // av_read_frame: 分配新的一个数据包的内存, 并使得 packet 中的数据指针指向它
         // NOTE: 大小可变!!!
-        int ret = av_read_frame(format_ctx_.get(), packet_template.get());
+        int ret = 0;
+        {
+            std::lock_guard lk{format_ctx_mtx_};
+            ret = av_read_frame(format_ctx_.get(), packet_template.get());
+        }
         if (ret < 0) {
             if (ret == AVERROR_EOF) {
                 LOG_INFO("文件读取完毕!");
@@ -216,7 +220,11 @@ int Player::DecodeAudioFrame() {
         }
 
         // avcodec_send_packet: 异步发送一个 AVPacket 到解码器(解码器内部维护一个 AVPacket 队列)
-        int ret = avcodec_send_packet(audio_codec_ctx_.get(), packet->get());
+        int ret = 0;
+        {
+            std::lock_guard lk{audio_codec_mtx_};
+            ret = avcodec_send_packet(audio_codec_ctx_.get(), packet->get());
+        }
         if (ret < 0) {
             // 对于 EAGAIN，我们什么都不做，直接进入下面的 receive_frame 循环尝试取帧。
             // 对于其他错误，记录日志并返回错误码。packet 会在函数返回时自动释放。
@@ -228,7 +236,11 @@ int Player::DecodeAudioFrame() {
 
         // 循环调用 avcodec_receive_frame 以获取所有可能产生的帧 (0,1,...)
         while (!stop_.load()) {
-            ret = avcodec_receive_frame(audio_codec_ctx_.get(), audio_frame_.get());
+            ret = 0;
+            {
+                std::lock_guard lk{audio_codec_mtx_};
+                ret = avcodec_receive_frame(audio_codec_ctx_.get(), audio_frame_.get());
+            }
             if (ret < 0) {
                 if (ret == AVERROR(EAGAIN)) {  // 需要更多 packet
                     break;
@@ -271,9 +283,13 @@ int Player::DecodeAudioFrame() {
                 auto duration = static_cast<double>(audio_frame_.get()->nb_samples) /
                                 audio_frame_.get()->sample_rate;
 
-                // 将 pts 转换为秒，然后加上持续时长
-                audio_clock_ = audio_frame_.get()->pts * av_q2d(time_base) + duration;
+                {
+                    std::lock_guard lk{clock_mtx_};
+                    // 将 pts 转换为秒，然后加上持续时长
+                    audio_clock_ = audio_frame_.get()->pts * av_q2d(time_base) + duration;
+                }
             } else {
+                std::lock_guard lk{clock_mtx_};
                 audio_clock_ = NAN;
             }
             av_frame_unref(audio_frame_.get());  // 清空 frame 的引用计数
@@ -330,18 +346,29 @@ int Player::DecodeVideoFrame() {
     while (!stop_.load()) {
         auto packet = video_packet_queue_.Pop();  // 阻塞式
         if (packet) {                             // 成功获取到包
-            int ret = avcodec_send_packet(video_codec_ctx_.get(), packet->get());
+            int ret = 0;
+            {
+                std::lock_guard lk{video_codec_mtx_};
+                ret = avcodec_send_packet(video_codec_ctx_.get(), packet->get());
+            }
             if (ret < 0) {
                 LOG_ERROR("视频 avcodec_send_packet 发生错误: {}", av_err2str(ret));
                 // 即使发送失败，也尝试继续解码，可能只是需要先 receive
             }
         } else {  // 如果返回空指针, 说明队列已关闭, 这是来自 ReadLoop 的 EOF 信号
             LOG_INFO("视频包队列已关闭, 发送 null packet 以冲刷解码器。");
-            avcodec_send_packet(video_codec_ctx_.get(), nullptr);
+            {
+                std::lock_guard lk{video_codec_mtx_};
+                avcodec_send_packet(video_codec_ctx_.get(), nullptr);
+            }
         }
 
         while (!stop_.load()) {
-            int ret = avcodec_receive_frame(video_codec_ctx_.get(), frame.get());
+            int ret = 0;
+            {
+                std::lock_guard lk{video_codec_mtx_};
+                ret = avcodec_receive_frame(video_codec_ctx_.get(), frame.get());
+            }
             if (ret < 0) {
                 if (ret == AVERROR(EAGAIN)) {  // 需要更多 packet
                     break;
@@ -404,12 +431,15 @@ void Player::VideoDecodeLoop() {
 }
 
 double Player::SynchronizeVideo(const AVFrame* frame, double pts) {
-    if (pts != 0) {
-        // 如果解码出的帧带有有效的 pts, 则更新视频时钟
-        video_clock_ = pts;
-    } else {
-        // 如果解码出的帧没有 pts, 就沿用上一帧的 video_clock_
-        pts = video_clock_;
+    {
+        std::lock_guard lk{clock_mtx_};
+        if (pts != 0) {
+            // 如果解码出的帧带有有效的 pts, 则更新视频时钟
+            video_clock_ = pts;
+        } else {
+            // 如果解码出的帧没有 pts, 就沿用上一帧的 video_clock_
+            pts = video_clock_;
+        }
     }
     double delay{.0};  // 一帧的理论间隔时间 = 1/帧率
     auto frame_rate = video_stream_->avg_frame_rate;
@@ -427,8 +457,11 @@ double Player::SynchronizeVideo(const AVFrame* frame, double pts) {
 
     // 在当前视频时钟的基础上，加上一帧的持续时间，
     // 得到下一帧的理论显示时间戳，并更新视频时钟。
-    video_clock_ += frame_delay;  // NOTE: 时钟: 下一帧的理论 pts
-    return pts;                   // 当前帧的 pts
+    {
+        std::lock_guard lk{clock_mtx_};
+        video_clock_ += frame_delay;  // NOTE: 时钟: 下一帧的理论 pts
+    }
+    return pts;  // 当前帧的 pts
 }
 
 void Player::ScheduleNextVideoRefresh(int delay_ms) {
@@ -556,13 +589,18 @@ void Player::RenderVideoFrame() {
 }
 
 double Player::GetMasterClock() const {
+    std::lock_guard lk{clock_mtx_};
     if (audio_stream_) {
         return audio_clock_;
+    } else {
+        return video_clock_;
     }
-    return GetVideoClock();
 }
 
-double Player::GetVideoClock() const { return video_clock_; }
+double Player::GetVideoClock() const {
+    std::lock_guard lk{clock_mtx_};
+    return video_clock_;
+}
 
 void Player::CalculateDisplayRect(SDL_Rect* rect, int window_x, int window_y, int window_width,
                                   int window_height, int picture_width, int picture_height,
@@ -628,6 +666,57 @@ void Player::TogglePause() {
         SDL_PauseAudio(0);
         // 3. 重新调度视频刷新
         ScheduleNextVideoRefresh(0);
+    }
+}
+
+void Player::SeekTo(double time_seconds) {
+    // 计算目标时间戳 (以视频流的时间基为单位)
+    if (!video_stream_) {
+        LOG_ERROR("Seek 失败: 没有视频流!");
+        return;
+    }
+    // 当 av_seek_frame 的 stream_index 为 -1 时, 时间戳单位必须是 AV_TIME_BASE
+    int64_t target_ts = static_cast<int64_t>(time_seconds * AV_TIME_BASE);
+
+    // 调用 av_seek_frame 进行跳转
+    // AVSEEK_FLAG_BACKWARD 确保我们 seek 到目标时间戳之前的最近一个关键帧
+    int ret = 0;
+    {
+        std::lock_guard lk{format_ctx_mtx_};
+        // 当 stream_index >= 0 时：timestamp 参数必须是该特定流的时间基单位。
+        // 当 stream_index == -1 时：FFmpeg 会选择一个默认流（通常是视频流）进行跳转，
+        // 但此时 timestamp 参数必须是 AV_TIME_BASE 单位(1000000)
+        ret = av_seek_frame(format_ctx_.get(), -1, target_ts, AVSEEK_FLAG_BACKWARD);
+    }
+    if (ret < 0) {
+        LOG_ERROR("Seek 失败: {}", av_err2str(ret));
+        return;
+    }
+
+    // 清空缓冲区
+    video_packet_queue_.Clear();
+    audio_packet_queue_.Clear();
+    video_frame_queue_.Clear();
+
+    // 刷新解码器内部缓冲区
+    if (video_codec_ctx_) {
+        std::lock_guard lk{video_codec_mtx_};
+        avcodec_flush_buffers(video_codec_ctx_.get());
+    }
+    if (audio_codec_ctx_) {
+        std::lock_guard lk{audio_codec_mtx_};
+        avcodec_flush_buffers(audio_codec_ctx_.get());
+    }
+
+    // 重置时钟和同步状态
+    {
+        std::lock_guard lk{clock_mtx_};
+        video_clock_ = time_seconds;
+        audio_clock_ = time_seconds;  // 简单地将音频时钟也设置为目标时间
+        // 重置帧定时器, 将其校准为当前的系统时间，为下一次延迟计算提供正确的基准
+        frame_timer_ = static_cast<double>(av_gettime()) / 1000000.0;
+        last_frame_pts_ = 0.0;
+        last_frame_delay_ = 0.0;
     }
 }
 
