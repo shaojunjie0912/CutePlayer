@@ -194,6 +194,9 @@ public:
 
     std::size_t GetSize() const;
 
+    // 清空队列
+    void Clear();
+
     // 关闭队列
     void Close();
 

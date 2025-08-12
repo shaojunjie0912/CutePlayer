@@ -54,19 +54,27 @@ int main(int argc, char* argv[]) {
         SDL_Event event;
         while (true) {
             SDL_WaitEvent(&event);
+            // 如果是退出事件，需要手动停止播放器并退出循环
             if (event.type == SDL_QUIT) {
-                // 如果是退出事件，需要手动停止播放器并退出循环
                 player.Stop();  // 我们需要在 Player 类中增加这个方法
                 break;
-            } else if (event.type == avplayer::kFFRefreshEvent) {
-                // 如果是视频刷新事件，交给播放器处理
+            }
+            // 如果是视频刷新事件，交给播放器处理
+            else if (event.type == avplayer::kFFRefreshEvent) {
                 player.VideoRefreshHandler();
-            } else if (event.type == SDL_KEYDOWN) {
-                // 如果是键盘按下事件
+            }
+            // 如果是键盘按下事件
+            else if (event.type == SDL_KEYDOWN) {
                 if (event.key.keysym.sym == SDLK_SPACE) {
                     // 如果是空格键，切换暂停/播放状态
-                    LOG_INFO("切换暂停/播放状态。");
+                    LOG_INFO("切换暂停/播放状态");
                     player.TogglePause();
+                } else if (event.key.keysym.sym == SDLK_LEFT) {
+                    LOG_INFO("快退 5 秒");
+                    player.SeekTo(player.GetMasterClock() - 5.0);
+                } else if (event.key.keysym.sym == SDLK_RIGHT) {
+                    LOG_INFO("快进 5 秒");
+                    player.SeekTo(player.GetMasterClock() + 5.0);
                 }
             }
         }

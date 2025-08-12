@@ -77,6 +77,8 @@ public:
     void TogglePause();
     // 停止播放
     void Stop();
+    // Seek
+    void SeekTo(double time_sec);
 
 private:
     std::string file_path_;
@@ -94,6 +96,12 @@ private:
     UniqueAVCodecContext audio_codec_ctx_;
     int video_stream_idx_{-1};
     int audio_stream_idx_{-1};
+
+    // seek 过程保护
+    mutable std::mutex format_ctx_mtx_;
+    mutable std::mutex video_codec_mtx_;
+    mutable std::mutex audio_codec_mtx_;
+    mutable std::mutex clock_mtx_;
 
     // 线程
     std::jthread read_thread_;
