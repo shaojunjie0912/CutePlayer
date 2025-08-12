@@ -49,7 +49,27 @@ int main(int argc, char* argv[]) {
 
     try {
         avplayer::Player player{media_file};
-        player.Run();
+        // 在 player.Run() 之前，新增一个事件循环来处理暂停/播放
+        // 将事件处理逻辑与 player 内部的渲染循环解耦
+        SDL_Event event;
+        while (true) {
+            SDL_WaitEvent(&event);
+            if (event.type == SDL_QUIT) {
+                // 如果是退出事件，需要手动停止播放器并退出循环
+                player.Stop();  // 我们需要在 Player 类中增加这个方法
+                break;
+            } else if (event.type == avplayer::kFFRefreshEvent) {
+                // 如果是视频刷新事件，交给播放器处理
+                player.VideoRefreshHandler();
+            } else if (event.type == SDL_KEYDOWN) {
+                // 如果是键盘按下事件
+                if (event.key.keysym.sym == SDLK_SPACE) {
+                    // 如果是空格键，切换暂停/播放状态
+                    LOG_INFO("切换暂停/播放状态。");
+                    player.TogglePause();
+                }
+            }
+        }
         LOG_INFO("播放器退出!");
     } catch (const std::runtime_error& e) {
         LOG_ERROR("播放器运行失败! 错误信息: {}", e.what());
