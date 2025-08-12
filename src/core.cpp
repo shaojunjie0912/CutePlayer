@@ -43,6 +43,7 @@ std::optional<UniqueAVPacket> PacketQueue::TryPop() {
     queue_.pop();
     curr_data_bytes_ -= packet->size;
     duration_ -= packet->duration;
+    cv_can_push_.notify_one();
     return packet;
 }
 

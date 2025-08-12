@@ -1,14 +1,15 @@
-# AVPlayer
+# AVPlayer 项目文档
 
 ## 项目概述
 
-`AVPlayer` 是一个基于 FFmpeg (7.1) 和 SDL2 (2.30) 的现代化、轻量级音视频播放器。它使用 C++17/20 编写，并采用 `xmake` 进行项目构建。该项目的核心目标是展示一个清晰、健壮、易于理解的播放器架构，特别是在多线程处理、资源管理和音视频同步等关键领域，为学习者提供一个高质量的参考实现。
+`AVPlayer` 是一个基于 FFmpeg (7.1) 和 SDL2 (2.30) 的现代化、轻量级音视频播放器。它使用 C++20 编写，并采用 `xmake` 进行项目构建。该项目的核心目标是展示一个清晰、健壮、易于理解的播放器架构，特别是在多线程处理、资源管理和音视频同步等关键领域，为学习者提供一个高质量的参考实现。
 
 **核心特性:**
 
-* **现代化 C++ 实践:** 全面采用 C++17/20 特性，特别是通过 `std::unique_ptr` 和自定义删除器实现对 FFmpeg/SDL C 风格资源的 RAII 式管理，以及使用 `std::jthread` 进行线程管理。
+* **现代化 C++ 实践:** 全面采用 C++20 特性，特别是通过 `std::unique_ptr` 和自定义删除器实现对 FFmpeg/SDL C 风格资源的 RAII 式管理，以及使用 `std::jthread` 进行线程管理。
 * **多线程架构:** 解复用、视频解码、音频解码和渲染分别在独立线程中运行，充分利用多核 CPU 性能，保证 UI 响应的流畅性。
 * **精准的音视频同步:** 采用音频时钟作为主时钟的策略，实现了基于动态阈值调整和时钟漂移修正的精确同步逻辑，确保了流畅的播放体验。
+* **交互式播放控制**: 支持运行时的播放/暂停切换以及基于时间步长的快进/快退功能。
 * **健壮的队列设计:** 实现了两种核心的线程安全队列：`PacketQueue` 用于码流包缓冲，`FrameQueue` 用于解码帧缓冲，它们是整个多线程架构的基石。
 * **清晰的模块划分:** 项目代码结构清晰，分为播放器主逻辑 (`Player`)、核心数据结构 (`PacketQueue`, `FrameQueue`) 和日志模块，易于扩展和维护。
 
@@ -49,72 +50,87 @@ graph TD
 
 **数据流转路径:**
 
-1.  **读取线程** (`ReadLoop`)：作为唯一的“生产者源头”，负责调用 `av_read_frame()` 从媒体文件中读取 `AVPacket`。然后根据流类型（视频或音频），将 `AVPacket` 分别推入两个不同的 `PacketQueue` 中。
-2.  **视频解码线程** (`VideoDecodeLoop`)：作为视频数据的“消费者”和“生产者”，它从视频 `PacketQueue` 中取出 `AVPacket`，解码成 `AVFrame`，然后将解码后的帧放入 `FrameQueue` 中，等待渲染。
-3.  **音频处理** (`AudioCallback`)：音频处理由 SDL 的回调机制驱动。当音频设备需要数据时，`AudioCallback` 被触发。它会尝试从音频 `PacketQueue` 中拉取 `AVPacket`，立即解码并重采样，然后将数据直接喂给音频设备。这种“拉”模型确保了音频播放的低延迟。
-4.  **主线程** (`Run`)：负责 UI 和渲染。它阻塞在 `SDL_WaitEvent()` 上等待事件。一个周期性的 `SDL_Timer` 会推送自定义的 `kFFRefreshEvent` 事件来触发 `VideoRefreshHandler`。`VideoRefreshHandler` 负责执行核心的音视频同步逻辑，并决定何时从 `FrameQueue` 中取出并渲染一帧视频。
+1.  **读取线程** (`ReadLoop`): 作为唯一的“生产者源头”，负责调用 `av_read_frame()` 从媒体文件中读取 `AVPacket`。然后根据流类型（视频或音频），将 `AVPacket` 分别推入两个不同的 `PacketQueue` 中。
+2.  **视频解码线程** (`VideoDecodeLoop`): 作为视频数据的“消费者”和“生产者”，它从视频 `PacketQueue` 中取出 `AVPacket`，解码成 `AVFrame`，然后将解码后的帧放入 `FrameQueue` 中，等待渲染。
+3.  **音频处理** (`AudioCallback`): 音频处理由 SDL 的回调机制驱动。当音频设备需要数据时，`AudioCallback` 被触发。它会尝试从音频 `PacketQueue` 中拉取 `AVPacket`，立即解码并重采样，然后将数据直接喂给音频设备。这种“拉”模型确保了音频播放的低延迟。
+4.  **主线程** (`main`): 负责 UI 和渲染。它阻塞在 `SDL_WaitEvent()` 上等待事件。一个周期性的 `SDL_Timer` 会推送自定义的 `kFFRefreshEvent` 事件来触发 `VideoRefreshHandler`。`VideoRefreshHandler` 负责执行核心的音视频同步逻辑，并决定何时从 `FrameQueue` 中取出并渲染一帧视频。
+
 
 ### 线程模型详解
 
-* **主线程**:
-    * 职责：初始化 SDL、创建窗口和渲染器、处理用户输入（如关闭窗口）以及最终的视频帧渲染。
-    * 核心循环位于 `Player::Run()`，通过 `SDL_WaitEvent` 驱动，保持了对用户操作的响应性。
+  * **主线程**:
 
-* **读取线程 (`read_thread_`)**:
-    * 职责：执行 `Player::ReadLoop`，持续从文件中解复用数据包，直到文件结束。
-    * 当文件读取完毕或发生错误时，它会关闭两个 `PacketQueue`，以此作为向后继线程（解码线程）传递“数据流结束”的信号。
+      * 职责：初始化 SDL、创建窗口和渲染器、处理用户输入（如暂停/播放、快进/快退、关闭窗口）以及最终的视频帧渲染。
+      * 核心循环位于 `main()` 函数中，通过 `SDL_WaitEvent` 驱动，保持了对用户操作的响应性。
 
-* **视频解码线程 (`video_decode_thread_`)**:
-    * 职责：执行 `Player::VideoDecodeLoop`，从 `video_packet_queue_` 中阻塞式地获取数据包进行解码。
-    * 解码后的视频帧（包含计算好的 PTS）被放入 `video_frame_queue_`。
-    * 当从 `video_packet_queue_` 获取到空指针（队列关闭的信号）后，它会冲刷（flush）解码器内部的缓冲帧，然后关闭 `video_frame_queue_` 并退出线程。
+  * **读取线程 (`read_thread_`)**:
 
-* **音频回调线程**:
-    * 该线程由 `SDL_OpenAudio` 创建并管理，不由我们直接控制。
-    * 职责：高优先级地执行 `Player::AudioCallback`。此函数**必须**是非阻塞的，以避免音频卡顿。因此，它使用 `TryPop` 从 `audio_packet_queue_` 非阻塞地获取数据包。
+      * 职责：执行 `Player::ReadLoop`，持续从文件中解复用数据包，直到文件结束。
+      * 当文件读取完毕或发生错误时，它会关闭两个 `PacketQueue`，以此作为向后继线程（解码线程）传递“数据流结束”的信号。
+
+  * **视频解码线程 (`video_decode_thread_`)**:
+
+      * 职责：执行 `Player::VideoDecodeLoop`，从 `video_packet_queue_` 中阻塞式地获取数据包进行解码。
+      * 解码后的视频帧（包含计算好的 PTS）被放入 `video_frame_queue_`。
+      * 当从 `video_packet_queue_` 获取到空指针（队列关闭的信号）后，它会冲刷（flush）解码器内部的缓冲帧，然后关闭 `video_frame_queue_` 并退出线程。
+
+  * **音频回调线程**:
+
+      * 该线程由 `SDL_OpenAudio` 创建并管理，不由我们直接控制。
+      * 职责：高优先级地执行 `Player::AudioCallback`。此函数**必须**是非阻塞的，以避免音频卡顿。因此，它使用 `TryPop` 从 `audio_packet_queue_` 非阻塞地获取数据包。
 
 ### 音视频同步（AV-Sync）
 
 音视频同步是播放器的灵魂。`AVPlayer` 采用**音频作为主时钟**的策略，因为人耳对音频的卡顿比视频的跳帧更敏感。
 
 1.  **主时钟源**: 音频时钟 `audio_clock_` 是同步的基准。它在 `DecodeAudioFrame` 函数中，根据解码出的音频帧的 PTS 和时长进行更新。
+
     ```cpp
     // file: player.cpp
     // 在音频解码后更新音频时钟
-    if (audio_frame_.get()->pts != AV_NOPTS_VALUE) {
-        AVRational time_base = audio_stream_->time_base;
-        auto duration = static_cast<double>(audio_frame_.get()->nb_samples) /
-                        audio_frame_.get()->sample_rate;
-        audio_clock_ = audio_frame_.get()->pts * av_q2d(time_base) + duration;
+    if (audio_frame_.get()->pts != AV_NOPTS_VALUE) { //
+        AVRational time_base = audio_stream_->time_base; //
+
+        // 计算当前帧的持续时长 (秒) = 样本数 / 采样率
+        auto duration = static_cast<double>(audio_frame_.get()->nb_samples) / //
+                        audio_frame_.get()->sample_rate; //
+
+        {
+            std::lock_guard lk{clock_mtx_}; //
+            // 将 pts 转换为秒，然后加上持续时长
+            audio_clock_ = audio_frame_.get()->pts * av_q2d(time_base) + duration; //
+        }
     }
     ```
 
 2.  **同步执行点**: 同步逻辑在 `VideoRefreshHandler` 中执行，该函数由定时器周期性触发。
 
 3.  **核心同步逻辑**:
-    * **计算时钟差**: 计算当前视频帧的显示时间戳 (PTS) 与主时钟 (`audio_clock_`) 的差值 `diff = pts - ref_clock`。
-    * **视频过慢 (追赶)**: 如果 `diff` 是一个较大的负数（`diff <= -sync_threshold`），意味着视频远远落后于音频。此时，播放器会**丢弃**当前这帧视频，不进行渲染，并立即调度下一帧的刷新，以快速追赶音频进度。
+
+      * **计算时钟差**: 计算当前视频帧的显示时间戳 (PTS) 与主时钟 (`audio_clock_`) 的差值 `diff = pts - ref_clock`。
+      * **视频过慢 (追赶)**: 如果 `diff` 是一个较大的负数（`diff <= -sync_threshold`），意味着视频远远落后于音频。此时，播放器会**丢弃**当前这帧视频，不进行渲染，并立即调度下一帧的刷新，以快速追赶音频进度。
         ```cpp
         // file: player.cpp
-        if (diff <= -sync_threshold) {
+        if (diff <= -sync_threshold) { //
             // 丢帧逻辑
-            video_frame_queue_.MoveReadIndex(); // 移动读指针，丢弃当前帧
-            ScheduleNextVideoRefresh(0);        // 立即调度下一帧
-            return;                             // 直接返回，不渲染
+            video_frame_queue_.MoveReadIndex();  // 移动读指针，丢弃当前帧
+            ScheduleNextVideoRefresh(0);         // 立即调度下一帧
+            return;                              // 直接返回，不渲染
         }
         ```
-    * **视频过快 (等待)**: 如果 `diff` 是一个正数（`diff >= sync_threshold`），意味着视频领先于音频。此时，播放器会**增加**下一帧的显示延迟，通常是将理论延迟加倍，以等待音频跟上。
-    * **动态阈值**: 同步阈值 `sync_threshold` 并非固定值，而是与帧的理论间隔 `delay` 相关联。这使得低帧率视频有更宽松的同步容忍度，而高帧率视频则更严格，非常智能。
+      * **视频过快 (等待)**: 如果 `diff` 是一个正数（`diff >= sync_threshold`），意味着视频领先于音频。此时，播放器会**增加**下一帧的显示延迟，通常是将理论延迟加倍，以等待音频跟上。
+      * **动态阈值**: 同步阈值 `sync_threshold` 并非固定值，而是与帧的理论间隔 `delay` 相关联。这使得低帧率视频有更宽松的同步容忍度，而高帧率视频则更严格，非常智能。
 
 4.  **定时器漂移修正**: 简单地使用 `SDL_AddTimer(delay)` 会因为操作系统调度延迟而产生累计误差。`AVPlayer` 使用 `frame_timer_` 来解决这个问题。它维护一个理想的下一帧显示时刻，每次调度时，都计算 `理想时刻 - 当前时刻` 得到精确的延迟，从而消除了累计误差，保证了视频播放的平滑性。
+
     ```cpp
     // file: player.cpp
-    frame_timer_ += delay;
-    double actual_delay = frame_timer_ - (static_cast<double>(av_gettime()) / 1000000.0);
-    if (actual_delay < 0.010) {
+    frame_timer_ += delay; //
+    double actual_delay = frame_timer_ - (static_cast<double>(av_gettime()) / 1000000.0); //
+    if (actual_delay < 0.010) { //
         actual_delay = 0.010; // 最小延迟，防止忙等
     }
-    ScheduleNextVideoRefresh(static_cast<int>(actual_delay * 1000 + 0.5));
+    ScheduleNextVideoRefresh(static_cast<int>(actual_delay * 1000 + 0.5)); //
     ```
 
 ## 关键模块与类
@@ -127,18 +143,18 @@ graph TD
 
 ```cpp
 // file: core.hpp
-struct AVFormatContextDeleter {
-    void operator()(AVFormatContext* p) const {
-        if (p) {
-            avformat_close_input(&p);
+struct AVFormatContextDeleter { //
+    void operator()(AVFormatContext* p) const { //
+        if (p) { //
+            avformat_close_input(&p); //
         }
     }
 };
 
-using UniqueAVFormatContext = std::unique_ptr<AVFormatContext, AVFormatContextDeleter>;
+using UniqueAVFormatContext = std::unique_ptr<AVFormatContext, AVFormatContextDeleter>; //
 
-// 使用
-UniqueAVFormatContext format_ctx_;
+// 在 Player 类中使用
+UniqueAVFormatContext format_ctx_; //
 // 当 format_ctx_ 离开作用域时，AVFormatContextDeleter 会被自动调用，
 // 从而安全地释放资源，杜绝了内存泄漏。
 ```
@@ -147,41 +163,44 @@ UniqueAVFormatContext format_ctx_;
 
 ### `PacketQueue` 类
 
-* **定义**: 一个线程安全的、有界的数据包队列，用于在读取线程和解码线程之间传递 `AVPacket`。
-* **设计**:
-    * 内部使用 `std::queue` 存储 `UniqueAVPacket`。
-    * 边界并非通过包的数量，而是通过包内数据的总字节数 `curr_data_bytes_` 来控制，这能更精确地管理内存占用。
-    * 使用 `std::mutex` 和两个 `std::condition_variable` (`cv_can_pop_`, `cv_can_push_`) 来实现线程间的同步与等待，是经典的多线程生产者-消费者模式实现。
-* **关键接口**:
-    * `Push(UniqueAVPacket packet)`: 阻塞式入队。如果队列已满（字节数超限），则等待。
-    * `Pop()`: 阻塞式出队。如果队列为空，则等待。
-    * `TryPop()`: 非阻塞式出队。如果队列为空，立即返回 `std::nullopt`。该接口对于要求低延迟、不能阻塞的音频回调至关重要。
-    * `Close()`: 关闭队列。设置 `closed_` 标志并唤醒所有等待的线程，以实现优雅停机。
+  * **定义**: 一个线程安全的、有界的数据包队列，用于在读取线程和解码线程之间传递 `AVPacket`。
+  * **设计**:
+      * 内部使用 `std::queue` 存储 `UniqueAVPacket`。
+      * 边界并非通过包的数量，而是通过包内数据的总字节数 `curr_data_bytes_` 来控制，这能更精确地管理内存占用。
+      * 使用 `std::mutex` 和两个 `std::condition_variable` (`cv_can_pop_`, `cv_can_push_`) 来实现线程间的同步与等待，是经典的多线程生产者-消费者模式实现。
+  * **关键接口**:
+      * `Push(UniqueAVPacket packet)`: 阻塞式入队。如果队列已满（字节数超限），则等待。
+      * `Pop()`: 阻塞式出队。如果队列为空，则等待。
+      * `TryPop()`: 非阻塞式出队。如果队列为空，立即返回 `std::nullopt`。该接口对于要求低延迟、不能阻塞的音频回调至关重要。
+      * `Close()`: 关闭队列。设置 `closed_` 标志并唤醒所有等待的线程，以实现优雅停机。
 
 ### `FrameQueue` 类
 
-* **定义**: 一个线程安全的、固定大小的环形缓冲区，用于在解码线程和渲染线程之间传递解码后的 `DecodedFrame`。
-* **设计**:
-    * 内部使用 `std::vector<DecodedFrame>` 实现环形缓冲区，在构造时预先分配好所有内存，避免了运行时的动态内存分配。
-    * 通过读写索引 `rindex_` 和 `windex_` 来管理环形队列。
-    * `DecodedFrame` 结构体不仅包含 `UniqueAVFrame`，还封装了 PTS、时长等与渲染和同步相关的元数据。
-    * `MoveReadIndex()` 在移动读指针前，会调用 `av_frame_unref()` 来释放 `AVFrame` 的数据引用，使其可以被解码器重新使用，这是正确管理 `AVFrame`生命周期的关键。
-* **关键接口**:
-    * `PeekWritable()`: 阻塞式地获取一个可写入的帧槽位。如果队列已满，则等待。
-    * `MoveWriteIndex()`: 在向槽位写入数据后，调用此函数来推进写指针。
-    * `PeekReadable()`: 阻塞式地获取一个可供读取（渲染）的帧。如果队列为空，则等待。
-    * `MoveReadIndex()`: 在读取（渲染）完一帧后，调用此函数来推进读指针，并释放该帧。
+  * **定义**: 一个线程安全的、固定大小的环形缓冲区，用于在解码线程和渲染线程之间传递解码后的 `DecodedFrame`。
+  * **设计**:
+      * 内部使用 `std::vector<DecodedFrame>` 实现环形缓冲区，在构造时预先分配好所有内存，避免了运行时的动态内存分配。
+      * 通过读写索引 `rindex_` 和 `windex_` 来管理环形队列。
+      * `DecodedFrame` 结构体不仅包含 `UniqueAVFrame`，还封装了 PTS、时长等与渲染和同步相关的元数据。
+      * `MoveReadIndex()` 在移动读指针前，会调用 `av_frame_unref()` 来释放 `AVFrame` 的数据引用，使其可以被解码器重新使用，这是正确管理 `AVFrame`生命周期的关键。
+  * **关键接口**:
+      * `PeekWritable()`: 阻塞式地获取一个可写入的帧槽位。如果队列已满，则等待。
+      * `MoveWriteIndex()`: 在向槽位写入数据后，调用此函数来推进写指针。
+      * `PeekReadable()`: 阻塞式地获取一个可供读取（渲染）的帧。如果队列为空，则等待。
+      * `MoveReadIndex()`: 在读取（渲染）完一帧后，调用此函数来推进读指针，并释放该帧。
 
-### `Player` 类
+### `Player` 类与交互控制
 
 `Player` 是整个播放器的核心控制器，它封装了所有的状态和逻辑。
 
-* **构造函数 `Player::Player()`**: 负责按顺序执行所有初始化步骤：`InitSDL` -> `OpenInputFile` -> `FindStreams` -> `OpenStreamComponent` -> `StartThreads`。
-* **析构函数 `Player::~Player()`**: 负责优雅地关闭播放器。它会先设置停止标志位，然后关闭所有队列以唤醒线程，等待线程（通过 `jthread` 的自动 join）结束后，再释放 SDL 和其他资源。
-* **解码循环 (`DecodeVideoFrame`, `DecodeAudioFrame`)**: 都遵循 `avcodec_send_packet` / `avcodec_receive_frame` 的标准异步解码模式，并正确处理了 `AVERROR(EAGAIN)` 和 `AVERROR_EOF` 等情况。
-* **渲染与计算**:
-    * `RenderVideoFrame()`: 负责将 YUV 格式的 `AVFrame` 更新到 SDL 的 Texture 上并显示。
-    * `CalculateDisplayRect()`: 能够正确处理视频的 SAR (Sample Aspect Ratio)，计算出保持原始画面比例的渲染区域，避免画面拉伸变形。
+  * **构造与析构**:
+      * 构造函数 `Player::Player()`: 负责按顺序执行所有初始化步骤：`InitSDL` -\> `OpenInputFile` -\> `FindStreams` -\> `OpenStreamComponent` -\> `StartThreads`。
+      * 析构函数 `Player::~Player()`: 负责优雅地关闭播放器。它会先调用 `Stop()`，然后释放 SDL 和其他资源。`Stop()` 会设置停止标志位，并关闭所有队列以唤醒线程，而 `jthread` 的析构函数会自动 `join` 等待线程结束。
+  * **播放控制逻辑**:
+      * `TogglePause()`: 切换暂停/播放状态。它会调用 `SDL_PauseAudio` 来暂停/恢复音频设备，从而暂停/恢复主时钟。在恢复播放时，它还会重置 `frame_timer_`，以避免视频画面为追赶暂停时间而快进。
+      * `SeekTo(double time_seconds)`: 执行跳转操作。它会调用 `av_seek_frame` 跳转到目标时间点附近的关键帧，然后清空所有队列和解码器缓冲区，最后重置所有时钟，确保从一个干净的状态开始新的播放。
+  * **渲染与计算**:
+      * `RenderVideoFrame()`: 负责将 YUV 格式的 `AVFrame` 更新到 SDL 的 Texture 上并显示。
+      * `CalculateDisplayRect()`: 能够正确处理视频的 SAR (Sample Aspect Ratio)，计算出保持原始画面比例的渲染区域，避免画面拉伸变形。
 
 ## 如何构建与运行
 
@@ -189,16 +208,17 @@ UniqueAVFormatContext format_ctx_;
 
 ### 依赖
 
-* FFmpeg (libavformat, libavcodec, libavutil, libswresample)
-* SDL2
-* spdlog
-* cxxopts
+  * FFmpeg (libavformat, libavcodec, libavutil, libswresample)
+  * SDL2
+  * spdlog
+  * cxxopts
 
-(使用 `xmake` 通常会自动处理这些依赖的下载和集成)
+(使用 `xmake` 会自动处理这些依赖的下载和集成)
 
 ### 构建命令
 
 在项目根目录下执行：
+
 ```bash
 xmake
 ```
@@ -209,18 +229,26 @@ xmake
 
 ```bash
 # 格式
-./build/<模式>/<平台>/avplayer -i <媒体文件路径> [选项]
+# ./avplayer -i <媒体文件路径> [选项]
 
-# 示例 (release 模式)
-./build/release/windows/avplayer.exe -i D:/videos/my_movie.mp4
+# 示例 (Windows, release 模式)
+xmake run avplayer -i D:/videos/my_movie.mp4
 
 # 查看帮助
-./build/release/linux/avplayer --help
+xmake run avplayer --help
 ```
 
 **命令行选项**:
 
-* `-i, --inputfile`: **(必需)** 指定要播放的媒体文件路径。
-* `-e, --loglevel`: 设置日志级别 (如 `debug`, `info`, `error`)，默认为 `info`。
-* `-d, --logdir`: 设置日志文件的输出目录，默认为 `logs`。
-* `-h, --help`: 显示帮助信息。
+  * `-i, --inputfile`: **(必需)** 指定要播放的媒体文件路径。
+  * `-e, --loglevel`: 设置日志级别 (如 `debug`, `info`, `error`)，默认为 `info`。
+  * `-d, --logdir`: 设置日志文件的输出目录，默认为 `logs`。
+  * `-h, --help`: 显示帮助信息。
+
+### 交互式快捷键
+
+在播放器窗口激活时，可以使用以下快捷键进行控制：
+
+  * **空格键 (`Spacebar`)**: 切换播放/暂停状态。
+  * **左方向键 (`Left Arrow`)**: 从当前播放位置快退 5 秒。
+  * **右方向键 (`Right Arrow`)**: 从当前播放位置快进 5 秒。
