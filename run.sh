@@ -1,3 +1,3 @@
 #!/bin/bash
 
-xmake run cuteplayer data/zelda.mp4
+xmake run avplayer data/zelda.mp4

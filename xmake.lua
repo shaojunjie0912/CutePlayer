@@ -1,4 +1,4 @@
-set_project("CutePlayer")
+set_project("AVPlayer")
 set_xmakever("3.0.0")
 
 set_languages("c++20")
@@ -13,7 +13,7 @@ add_requires("libsdl2")
 add_requires("spdlog")
 add_requires("cxxopts")
 
-target("cuteplayer", function () 
+target("avplayer", function () 
     set_kind("binary")
     add_files("src/*.cpp")
     add_includedirs("include")

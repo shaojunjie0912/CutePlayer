@@ -1,4 +1,4 @@
-#include <cuteplayer/logger.hpp>
+#include <avplayer/logger.hpp>
 #include <iostream>
 #include <memory>
 #include <string_view>
@@ -10,7 +10,7 @@ void init_logger(std::string_view log_file_path, std::string_view level) {
         sinks.push_back(std::make_shared<spdlog::sinks::stdout_color_sink_mt>());
         sinks.push_back(
             std::make_shared<spdlog::sinks::basic_file_sink_mt>(log_file_path.data(), true));
-        auto logger = std::make_shared<spdlog::logger>("CutePlayer", sinks.begin(), sinks.end());
+        auto logger = std::make_shared<spdlog::logger>("AVPlayer", sinks.begin(), sinks.end());
         spdlog::register_logger(logger);
         spdlog::set_default_logger(logger);
         logger->set_level(spdlog::level::from_str(level.data()));

@@ -1,11 +1,11 @@
-#include <cuteplayer/logger.hpp>
-#include <cuteplayer/player.hpp>
+#include <avplayer/logger.hpp>
+#include <avplayer/player.hpp>
 #include <stdexcept>
 
 // NOTE: 一个 AVPacket 可能对应一个或多个 AVFrame (音频)
 // 但也可能多个 AVPacket 才可以解码出一个 AVFrame (比如: 视频帧间依赖)
 
-namespace cuteplayer {
+namespace avplayer {
 
 // =============================================================================
 // Player 实现
@@ -74,7 +74,7 @@ void Player::InitSDL() {
         throw std::runtime_error("SDL 初始化失败: " + std::string(SDL_GetError()));
     }
     // 创建窗口 (unique_ptr 管理)
-    window_.reset(SDL_CreateWindow("CutePlayer", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+    window_.reset(SDL_CreateWindow("AVPlayer", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                                    kDefaultWidth, kDefaultHeight,
                                    SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE));
     if (!window_) {
@@ -631,4 +631,4 @@ void Player::CalculateDisplayRect(SDL_Rect* rect, int window_x, int window_y, in
     rect->h = std::max(static_cast<int>(height), 1);
 }
 
-}  // namespace cuteplayer
+}  // namespace avplayer

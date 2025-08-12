@@ -1,8 +1,8 @@
-# CutePlayer
+# AVPlayer
 
 ## 项目概述
 
-`CutePlayer` 是一个基于 FFmpeg (7.1) 和 SDL2 (2.30) 的现代化、轻量级音视频播放器。它使用 C++17/20 编写，并采用 `xmake` 进行项目构建。该项目的核心目标是展示一个清晰、健壮、易于理解的播放器架构，特别是在多线程处理、资源管理和音视频同步等关键领域，为学习者提供一个高质量的参考实现。
+`AVPlayer` 是一个基于 FFmpeg (7.1) 和 SDL2 (2.30) 的现代化、轻量级音视频播放器。它使用 C++17/20 编写，并采用 `xmake` 进行项目构建。该项目的核心目标是展示一个清晰、健壮、易于理解的播放器架构，特别是在多线程处理、资源管理和音视频同步等关键领域，为学习者提供一个高质量的参考实现。
 
 **核心特性:**
 
@@ -16,7 +16,7 @@
 
 ### 整体架构
 
-`CutePlayer` 采用经典的生产者-消费者模型，并将其扩展到多个线程中，形成了一条清晰的数据处理流水线。
+`AVPlayer` 采用经典的生产者-消费者模型，并将其扩展到多个线程中，形成了一条清晰的数据处理流水线。
 
 ```mermaid
 graph TD
@@ -75,7 +75,7 @@ graph TD
 
 ### 音视频同步（AV-Sync）
 
-音视频同步是播放器的灵魂。`CutePlayer` 采用**音频作为主时钟**的策略，因为人耳对音频的卡顿比视频的跳帧更敏感。
+音视频同步是播放器的灵魂。`AVPlayer` 采用**音频作为主时钟**的策略，因为人耳对音频的卡顿比视频的跳帧更敏感。
 
 1.  **主时钟源**: 音频时钟 `audio_clock_` 是同步的基准。它在 `DecodeAudioFrame` 函数中，根据解码出的音频帧的 PTS 和时长进行更新。
     ```cpp
@@ -106,7 +106,7 @@ graph TD
     * **视频过快 (等待)**: 如果 `diff` 是一个正数（`diff >= sync_threshold`），意味着视频领先于音频。此时，播放器会**增加**下一帧的显示延迟，通常是将理论延迟加倍，以等待音频跟上。
     * **动态阈值**: 同步阈值 `sync_threshold` 并非固定值，而是与帧的理论间隔 `delay` 相关联。这使得低帧率视频有更宽松的同步容忍度，而高帧率视频则更严格，非常智能。
 
-4.  **定时器漂移修正**: 简单地使用 `SDL_AddTimer(delay)` 会因为操作系统调度延迟而产生累计误差。`CutePlayer` 使用 `frame_timer_` 来解决这个问题。它维护一个理想的下一帧显示时刻，每次调度时，都计算 `理想时刻 - 当前时刻` 得到精确的延迟，从而消除了累计误差，保证了视频播放的平滑性。
+4.  **定时器漂移修正**: 简单地使用 `SDL_AddTimer(delay)` 会因为操作系统调度延迟而产生累计误差。`AVPlayer` 使用 `frame_timer_` 来解决这个问题。它维护一个理想的下一帧显示时刻，每次调度时，都计算 `理想时刻 - 当前时刻` 得到精确的延迟，从而消除了累计误差，保证了视频播放的平滑性。
     ```cpp
     // file: player.cpp
     frame_timer_ += delay;
@@ -121,7 +121,7 @@ graph TD
 
 ### 资源管理 (RAII)
 
-`CutePlayer` 的一大亮点是其优雅的资源管理。所有从 FFmpeg 和 SDL 获取的、需要手动释放的资源（如 `AVFormatContext`, `AVFrame`, `SDL_Window`）都被 `std::unique_ptr`接管，并为其提供了专门的 Deleter 结构体。
+`AVPlayer` 的一大亮点是其优雅的资源管理。所有从 FFmpeg 和 SDL 获取的、需要手动释放的资源（如 `AVFormatContext`, `AVFrame`, `SDL_Window`）都被 `std::unique_ptr`接管，并为其提供了专门的 Deleter 结构体。
 
 **示例：`UniqueAVFormatContext`**
 
@@ -205,17 +205,17 @@ xmake
 
 ### 运行命令
 
-`CutePlayer` 通过命令行参数接收要播放的媒体文件。
+`AVPlayer` 通过命令行参数接收要播放的媒体文件。
 
 ```bash
 # 格式
-./build/<模式>/<平台>/cuteplayer -i <媒体文件路径> [选项]
+./build/<模式>/<平台>/avplayer -i <媒体文件路径> [选项]
 
 # 示例 (release 模式)
-./build/release/windows/cuteplayer.exe -i D:/videos/my_movie.mp4
+./build/release/windows/avplayer.exe -i D:/videos/my_movie.mp4
 
 # 查看帮助
-./build/release/linux/cuteplayer --help
+./build/release/linux/avplayer --help
 ```
 
 **命令行选项**:

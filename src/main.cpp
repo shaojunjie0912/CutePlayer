@@ -1,5 +1,5 @@
-#include <cuteplayer/logger.hpp>
-#include <cuteplayer/player.hpp>
+#include <avplayer/logger.hpp>
+#include <avplayer/player.hpp>
 #include <cxxopts.hpp>
 #include <filesystem>
 #include <iostream>
@@ -48,7 +48,7 @@ int main(int argc, char* argv[]) {
     }
 
     try {
-        cuteplayer::Player player{media_file};
+        avplayer::Player player{media_file};
         player.Run();
         LOG_INFO("播放器退出!");
     } catch (const std::runtime_error& e) {

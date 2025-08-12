@@ -1,16 +1,16 @@
 #pragma once
 
 #include <atomic>
+#include <avplayer/core.hpp>
+#include <avplayer/logger.hpp>
 #include <cstdint>
-#include <cuteplayer/core.hpp>
-#include <cuteplayer/logger.hpp>
 #include <string>
 #include <thread>
 #include <vector>
 
 // NOTE: 选择音频时钟作为主时钟:
 
-namespace cuteplayer {
+namespace avplayer {
 
 // ================== Player Class ==================
 class Player {
@@ -119,4 +119,4 @@ private:
     std::atomic_bool stop_{false};
 };
 
-}  // namespace cuteplayer
+}  // namespace avplayer

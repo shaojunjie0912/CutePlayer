@@ -1,7 +1,7 @@
-#include <cuteplayer/core.hpp>
-#include <cuteplayer/logger.hpp>
+#include <avplayer/core.hpp>
+#include <avplayer/logger.hpp>
 
-namespace cuteplayer {
+namespace avplayer {
 
 // =============================================================================
 // PacketQueue 实现
@@ -138,4 +138,4 @@ void FrameQueue::Close() {
     cv_can_read_.notify_all();
 }
 
-}  // namespace cuteplayer
+}  // namespace avplayer

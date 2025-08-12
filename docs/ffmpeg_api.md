@@ -1,6 +1,6 @@
-# CutePlayer 项目中使用的 FFmpeg API 参考文档
+# AVPlayer 项目中使用的 FFmpeg API 参考文档
 
-本文档总结了 CutePlayer 项目中使用到的所有 FFmpeg API，包括函数、结构体和宏定义，并提供了详细的注释说明。
+本文档总结了 AVPlayer 项目中使用到的所有 FFmpeg API，包括函数、结构体和宏定义，并提供了详细的注释说明。
 
 ## 目录
 
@@ -915,7 +915,7 @@ FFMAX(a, b)           // 返回两个值中的最大值
 
 ## 总结
 
-本文档涵盖了 CutePlayer 项目中使用的所有主要 FFmpeg API。这些 API 主要分为以下几个功能模块：
+本文档涵盖了 AVPlayer 项目中使用的所有主要 FFmpeg API。这些 API 主要分为以下几个功能模块：
 
 1. **格式处理**: 文件打开、流信息获取、包读取
 2. **编解码**: 解码器查找、上下文管理、编解码操作

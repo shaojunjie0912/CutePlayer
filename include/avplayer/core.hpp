@@ -18,7 +18,7 @@ extern "C" {
 #include <queue>
 #include <vector>
 
-namespace cuteplayer {
+namespace avplayer {
 
 // ================== Constants ==================
 
@@ -210,4 +210,4 @@ private:
     bool closed_{false};  // 队列是否已关闭
 };
 
-}  // namespace cuteplayer
+}  // namespace avplayer
