@@ -1,11 +1,17 @@
 {
     "xmake.debuggingTargetsArguments": {
         "cuteplayer": [
+            "-l",
+            "debug",
+            "-f",
             "${workspaceFolder}/data/zelda_10s.mp4"
         ]
     },
     "xmake.runningTargetsArguments": {
         "cuteplayer": [
+            "-l",
+            "debug",
+            "-f",
             "${workspaceFolder}/data/zelda_10s.mp4"
         ]
     }
