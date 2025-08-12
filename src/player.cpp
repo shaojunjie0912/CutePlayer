@@ -27,46 +27,18 @@ Player::Player(std::string file_path)
         OpenStreamComponent(audio_stream_idx_);
     }
     StartThreads();
+    // 手动调度第一次视频刷新
+    ScheduleNextVideoRefresh(40);
 }
 
 Player::~Player() {
-    if (!stop_.load()) {
-        stop_.store(true);  // 停止标志位
-    }
-
-    // 关闭队列以唤醒任何等待中的线程
-    video_packet_queue_.Close();
-    audio_packet_queue_.Close();
-    video_frame_queue_.Close();
+    Stop();
 
     // 提前释放与 SDL 相关的资源，再调用 SDL_Quit
     texture_.reset();
     renderer_.reset();
     window_.reset();
     SDL_Quit();
-}
-
-void Player::Run() {
-    if (!video_stream_ && !audio_stream_) {
-        LOG_ERROR("必须同时包含视频流和音频流!");
-        return;
-    }
-    ScheduleNextVideoRefresh(40);  // 40ms 后推一个 VideoRefreshHandler 事件
-    SDL_Event event;
-    // 主线程阻塞等待事件, 直到收到退出事件
-    while (!stop_.load()) {
-        SDL_WaitEvent(&event);
-        switch (event.type) {
-            case SDL_QUIT:
-                stop_.store(true);
-                return;
-            case kFFRefreshEvent:       // 我们自定义的事件类型
-                VideoRefreshHandler();  // 视频刷新
-                break;
-            default:
-                break;
-        }
-    }
 }
 
 void Player::InitSDL() {
@@ -473,9 +445,10 @@ uint32_t Player::VideoRefreshTimerWrapper(uint32_t /*interval*/, void* opaque) {
 
 // 核心视频时钟->音频时钟同步逻辑
 void Player::VideoRefreshHandler() {
-    if (stop_.load()) {
+    if (stop_.load() || paused_.load()) {
         return;
     }
+
     if (!video_stream_) {               // 如果还没有视频流, 考虑等一会
         ScheduleNextVideoRefresh(100);  // 重新推入事件, 等待视频流
         return;
@@ -629,6 +602,33 @@ void Player::CalculateDisplayRect(SDL_Rect* rect, int window_x, int window_y, in
 
     rect->w = std::max(static_cast<int>(width), 1);
     rect->h = std::max(static_cast<int>(height), 1);
+}
+
+void Player::Stop() {
+    stop_.store(true);
+    // 关闭队列以唤醒任何可能在等待的线程
+    video_packet_queue_.Close();
+    audio_packet_queue_.Close();
+    video_frame_queue_.Close();
+}
+
+void Player::TogglePause() {
+    paused_.store(!paused_.load());
+    if (paused_.load()) {
+        LOG_INFO("暂停播放!");
+        SDL_PauseAudio(1);  // 暂停音频设备，SDL 将不再请求新的音频数据
+    } else {
+        LOG_INFO("继续播放!");
+        // 1. 校准 frame_timer_
+        // 这是至关重要的一步。暂停期间，时间已经流逝。
+        // 我们必须将 frame_timer 更新为当前时间，否则 VideoRefreshHandler
+        // 在计算 actual_delay 时会得到一个巨大的负数，导致视频快进或卡顿。
+        frame_timer_ = static_cast<double>(av_gettime()) / 1000000.0;
+        // 2. 恢复音频设备
+        SDL_PauseAudio(0);
+        // 3. 重新调度视频刷新
+        ScheduleNextVideoRefresh(0);
+    }
 }
 
 }  // namespace avplayer

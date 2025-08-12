@@ -24,7 +24,7 @@ public:
     Player& operator=(const Player&) = delete;
 
 public:
-    void Run();
+    // void Run();
 
 public:
     // =============== 初始化 ===============
@@ -72,6 +72,12 @@ public:
     // 更新视频时钟
     double SynchronizeVideo(const AVFrame* frame, double pts);
 
+    // =============== 控制 ===============
+    // 切换暂停/播放状态
+    void TogglePause();
+    // 停止播放
+    void Stop();
+
 private:
     std::string file_path_;
 
@@ -116,7 +122,8 @@ private:
     double last_frame_pts_{0.0};    // 上一帧显示时间戳
     double last_frame_delay_{0.0};  // 上一帧显示延迟
     //
-    std::atomic_bool stop_{false};
+    std::atomic_bool stop_{false};    // 是否停止
+    std::atomic_bool paused_{false};  // 是否暂停
 };
 
 }  // namespace avplayer
