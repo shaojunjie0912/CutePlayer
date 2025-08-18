@@ -504,7 +504,7 @@ void Player::VideoRefreshHandler() {
     // 通过两帧显示时间戳(PTS)的差值，来计算一帧的理论持续时间。
     // NOTE: 如果上一帧的 pts 为 0，则认为这是第一帧，间隔为 0。
     double delay = last_frame_pts_ == 0 ? 0 : pts - last_frame_pts_;
-    // 容错机制: 由于视频编码或容器格式的问题, 有时PTS可能会不连续, 重复甚至回退
+    // NOTE: 容错机制: 时间戳回退/跳变
     if (delay <= 0 || delay >= 1.0) {  // 如果间隔小于0或大于1秒, 则使用上一帧的间隔
         delay = last_frame_delay_;
     }
@@ -710,9 +710,12 @@ void Player::SeekTo(double time_seconds) {
 
     // 重置时钟和同步状态
     {
+        // TODO: 目标时钟和帧定时器的重置是否正确?
+        // av_seek_frame 跳转到目标时间戳前最近的 I 帧, 是否跟 time_seconds 有偏差?
         std::lock_guard lk{clock_mtx_};
         video_clock_ = time_seconds;
         audio_clock_ = time_seconds;  // 简单地将音频时钟也设置为目标时间
+
         // 重置帧定时器, 将其校准为当前的系统时间，为下一次延迟计算提供正确的基准
         frame_timer_ = static_cast<double>(av_gettime()) / 1000000.0;
         last_frame_pts_ = 0.0;
