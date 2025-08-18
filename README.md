@@ -284,7 +284,7 @@ struct DecodedFrame {
       * 析构函数 `Player::~Player()`: 负责优雅地关闭播放器。它会先调用 `Stop()`，然后释放 SDL 和其他资源。`Stop()` 会设置停止标志位，并关闭所有队列以唤醒线程，而 `jthread` 的析构函数会自动 `join` 等待线程结束。
   * **播放控制逻辑**:
       * `TogglePause()`: 切换暂停/播放状态。它会调用 `SDL_PauseAudio` 来暂停/恢复音频设备，从而暂停/恢复主时钟。在恢复播放时，它还会重置 `frame_timer_`，以避免视频画面为追赶暂停时间而快进。
-      * `SeekTo(double time_seconds)`: 执行跳转操作。它会调用 `av_seek_frame` 跳转到目标时间点附近的关键帧，然后清空所有队列和解码器缓冲区，最后重置所有时钟，确保从一个干净的状态开始新的播放。
+      * `SeekTo(double time_seconds)`: 执行跳转操作。它会调用 `av_seek_frame` 跳转到目标时间点附近的关键帧，然后清空所有队列和解码器缓冲区。最后，它会将所有时钟状态置为无效，等待跳转后的第一帧音频数据来精确地重建同步基准，从而确保从一个干净、准确的状态开始新的播放。
   * **渲染与计算**:
       * `RenderVideoFrame()`: 负责将 YUV 格式的 `AVFrame` 更新到 SDL 的 Texture 上并显示。
       * `CalculateDisplayRect()`: 能够正确处理视频的 SAR (Sample Aspect Ratio)，计算出保持原始画面比例的渲染区域，避免画面拉伸变形。
@@ -443,7 +443,7 @@ xmake run avplayer --help
 **操作特性:**
 - **即时响应**: 所有按键操作都会立即执行，无延迟
 - **状态保持**: 暂停后恢复播放会从准确的时间点继续
-- **音视频同步**: Seek操作后自动重新同步音视频时钟
+- **音视频同步**: 跳转操作后，时钟会基于解码出的新数据精确重建，实现平滑的再同步
 - **缓冲管理**: 跳转时自动清空旧缓冲区，快速加载新位置内容
 
 **技术实现细节:**
@@ -485,9 +485,16 @@ void Player::SeekTo(double time_seconds) {
     audio_packet_queue_.Clear();
     video_frame_queue_.Clear();
     
-    // 3. 重置解码器和时钟
+    // 3. 重置解码器缓冲区
     avcodec_flush_buffers(video_codec_ctx_.get());
     avcodec_flush_buffers(audio_codec_ctx_.get());
+
+    // 4. 重置时钟状态
+    {
+        std::lock_guard lk{clock_mtx_};
+        video_clock_ = NAN;  // 设为无效, 依赖解码后的实际时间戳来重建时钟
+        audio_clock_ = NAN;  // 设为无效, 依赖解码后的实际时间戳来重建时钟
+    }
 }
 ```
 

@@ -522,7 +522,7 @@ void Player::VideoRefreshHandler() {
 
     // ref_clock(音频时钟) 如果某一个音频帧没有有效pts, 会置 audio_clock_ 为 NAN
     // 这里需要进行有效性检查
-    if (!isnan(diff) && std::abs(diff) < kAvNoSyncThreshold) {
+    if (!isnan(ref_clock) && !isnan(diff) && std::abs(diff) < kAvNoSyncThreshold) {
         if (diff <= -sync_threshold) {
             // NOTE: 丢帧逻辑
             // 视频严重落后(diff为一个较大的负数)，需要丢帧来追赶。
@@ -710,11 +710,9 @@ void Player::SeekTo(double time_seconds) {
 
     // 重置时钟和同步状态
     {
-        // TODO: 目标时钟和帧定时器的重置是否正确?
-        // av_seek_frame 跳转到目标时间戳前最近的 I 帧, 是否跟 time_seconds 有偏差?
         std::lock_guard lk{clock_mtx_};
-        video_clock_ = time_seconds;
-        audio_clock_ = time_seconds;  // 简单地将音频时钟也设置为目标时间
+        audio_clock_ = NAN;  // 设为无效, 依赖解码后的实际时间戳来重建时钟
+        video_clock_ = NAN;
 
         // 重置帧定时器, 将其校准为当前的系统时间，为下一次延迟计算提供正确的基准
         frame_timer_ = static_cast<double>(av_gettime()) / 1000000.0;
